@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "441633014210",
+    "project_id": "sm-data-sub",
+    "storage_bucket": "sm-data-sub.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:441633014210:android:6aebfec1ed26ff7abc165b",
+        "android_client_info": {
+          "package_name": "com.sirsmarewaltd.smdatasub"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC1_lQ_jfkCchHjO2Ml6ollYMp8KBvvcZ4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
