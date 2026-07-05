@@ -104,7 +104,7 @@ export function AccountCard() {
   const isAccountReady = hasVirtualAccount && profile?.virtual_account_name;
   const storedBank = profile?.virtual_account_bank || "";
   const bankName = (() => {
-    if (storedBank.toLowerCase().includes("aspfiy")) return "ASPFIY";
+    if (storedBank.toLowerCase().includes("aspfiy")) return "Paga";
     if (storedBank.toLowerCase().includes("palmpay")) return "PalmPay";
     return storedBank;
   })();

@@ -137,9 +137,7 @@ Deno.serve(async (req) => {
         .update({
           account_number: accountNumber,
           virtual_account_name: payload.data.account?.account_name || profile.full_name,
-          // Always brand Aspfiy accounts as "Paga - Aspfiy" regardless of the
-          // underlying settlement bank (PalmPay, 9PSB, etc.) returned by Aspfiy.
-          virtual_account_bank: "Paga - Aspfiy",
+          virtual_account_bank: payload.data.account?.bank_name || "Paga",
         })
         .eq("user_id", profile.user_id)
         .is("virtual_account_name", null);

@@ -125,7 +125,7 @@ export default function AddMoney() {
                       <p className="font-semibold text-foreground">
                         {(() => {
                           const b = profile?.virtual_account_bank || "";
-                          if (b.toLowerCase().includes("aspfiy")) return "ASPFIY";
+                          if (b.toLowerCase().includes("aspfiy")) return "Paga";
                           if (b.toLowerCase().includes("palmpay")) return "PalmPay";
                           return b;
                         })()}
@@ -137,7 +137,7 @@ export default function AddMoney() {
                         onClick={() => {
                           const b = profile?.virtual_account_bank || "";
                           let display = b;
-                          if (b.toLowerCase().includes("aspfiy")) display = "ASPFIY";
+                          if (b.toLowerCase().includes("aspfiy")) display = "Paga";
                           else if (b.toLowerCase().includes("palmpay")) display = "PalmPay";
                           copyToClipboard(display, "Bank name");
                         }}
@@ -169,14 +169,12 @@ export default function AddMoney() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Account Name</p>
-                      <p className="font-semibold text-foreground">
-                        {(profile as any)?.virtual_account_name || profile?.full_name || 'User'}
-                      </p>
+                      <p className="font-semibold text-foreground">ASPFIY</p>
                     </div>
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => copyToClipboard((profile as any)?.virtual_account_name || profile?.full_name || '', 'Account name')}
+                      onClick={() => copyToClipboard('ASPFIY', 'Account name')}
                     >
                       <Copy className="w-4 h-4" />
                     </Button>

@@ -227,9 +227,7 @@ Deno.serve(async (req) => {
       acct.account_number || acct.accountNumber || acct.accountNo || null;
     const accountName =
       acct.account_name || acct.accountName || `${firstName} ${lastName}`.trim();
-    // Always brand Aspfiy accounts as "Paga - Aspfiy" regardless of the
-    // underlying settlement bank returned by Aspfiy (PalmPay, 9PSB, etc.).
-    const bankName = "Paga - Aspfiy";
+    const bankName = acct.bank_name || acct.bankName || "Paga";
 
     if (!accountNumber) {
       console.warn("Aspfiy did not return an account number in the response. Awaiting webhook.");

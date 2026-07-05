@@ -99,6 +99,7 @@ Deno.serve(async (req) => {
     const acct = data?.data?.account || data?.data || data?.account || data || {};
     const accountNumber = acct.account_number || acct.accountNumber || acct.accountNo || null;
     const accountName = acct.account_name || acct.accountName || `${firstName} ${lastName}`.trim();
+    const bankName = acct.bank_name || acct.bankName || "Paga";
 
     if (!accountNumber) {
       return json({ error: "No account returned by provider", details: data }, 400);
@@ -106,7 +107,7 @@ Deno.serve(async (req) => {
 
     const { error: upErr } = await supabase
       .from("profiles")
-      .update({ account_number: accountNumber, virtual_account_name: accountName, virtual_account_bank: "Paga - Aspfiy" })
+      .update({ account_number: accountNumber, virtual_account_name: accountName, virtual_account_bank: bankName })
       .eq("user_id", targetUserId);
     if (upErr) return json({ error: "Failed to save account", details: upErr.message }, 500);
 

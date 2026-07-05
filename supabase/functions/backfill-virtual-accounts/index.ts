@@ -92,6 +92,7 @@ Deno.serve(async (req) => {
       const acct = data?.data?.account || data?.data || data?.account || data || {};
       const accountNumber = acct.account_number || acct.accountNumber || acct.accountNo || null;
       const accountName = acct.account_name || acct.accountName || `${firstName} ${lastName}`.trim();
+      const bankName = acct.bank_name || acct.bankName || "PalmPay";
 
       if (!accountNumber) {
         results.push({ user_id: p.user_id, ok: false, reason: "no_account_in_response", body: data });
@@ -100,7 +101,7 @@ Deno.serve(async (req) => {
 
       const { error: upErr } = await supabase
         .from("profiles")
-        .update({ account_number: accountNumber, virtual_account_name: accountName, virtual_account_bank: "Paga - Aspfiy" })
+        .update({ account_number: accountNumber, virtual_account_name: accountName, virtual_account_bank: bankName })
         .eq("user_id", p.user_id);
 
       if (upErr) {
