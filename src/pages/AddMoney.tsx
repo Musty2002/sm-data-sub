@@ -12,6 +12,7 @@ export default function AddMoney() {
   const { profile, user, refreshProfile } = useAuth();
   const { toast } = useToast();
   const [isCreatingAccount, setIsCreatingAccount] = useState(false);
+  
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -21,7 +22,7 @@ export default function AddMoney() {
     });
   };
 
-  const createVirtualAccount = async () => {
+  const createVirtualAccount = async (force = false) => {
     console.log('[AddMoney] createVirtualAccount called, user:', !!user, 'profile:', !!profile);
     if (!user || !profile) {
       console.error('[AddMoney] Missing user or profile, cannot create virtual account');
@@ -49,6 +50,7 @@ export default function AddMoney() {
           email: profile.email || user.email,
           name: profile.full_name,
           phoneNumber: phone,
+          force,
         },
       });
 
@@ -120,12 +122,25 @@ export default function AddMoney() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Bank Name</p>
-                      <p className="font-semibold text-foreground">PalmPay</p>
+                      <p className="font-semibold text-foreground">
+                        {(() => {
+                          const b = profile?.virtual_account_bank || "";
+                          if (b.toLowerCase().includes("aspfiy")) return "ASPFIY";
+                          if (b.toLowerCase().includes("palmpay")) return "PalmPay";
+                          return b;
+                        })()}
+                      </p>
                     </div>
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => copyToClipboard('PalmPay', 'Bank name')}
+                        onClick={() => {
+                          const b = profile?.virtual_account_bank || "";
+                          let display = b;
+                          if (b.toLowerCase().includes("aspfiy")) display = "ASPFIY";
+                          else if (b.toLowerCase().includes("palmpay")) display = "PalmPay";
+                          copyToClipboard(display, "Bank name");
+                        }}
                     >
                       <Copy className="w-4 h-4" />
                     </Button>
@@ -167,6 +182,12 @@ export default function AddMoney() {
                     </Button>
                   </div>
                 </div>
+
+                <div className="bg-secondary/50 rounded-xl p-4 text-center">
+                  <p className="text-sm font-medium text-foreground">
+                    You already have an account number
+                  </p>
+                </div>
               </div>
             ) : (
               <div className="text-center py-6">
@@ -174,7 +195,7 @@ export default function AddMoney() {
                   You don't have a virtual account yet. Create one to receive payments.
                 </p>
                 <Button 
-                  onClick={createVirtualAccount} 
+                  onClick={() => createVirtualAccount(false)}
                   disabled={isCreatingAccount}
                   className="w-full"
                 >
