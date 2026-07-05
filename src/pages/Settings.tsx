@@ -30,12 +30,14 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
+import { Capacitor } from '@capacitor/core';
 
 export default function Settings() {
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState({
     push: true,
   });
+  const isNative = Capacitor.isNativePlatform();
 
   const handleDeleteAccount = () => {
     toast.error('Please contact support to delete your account');
@@ -56,7 +58,8 @@ export default function Settings() {
         </div>
 
         <div className="space-y-6">
-          {/* Notifications */}
+          {/* Notifications - hidden on native mobile (auto-on by default) */}
+          {!isNative && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
@@ -77,6 +80,7 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
+          )}
 
           {/* About */}
           <Card>

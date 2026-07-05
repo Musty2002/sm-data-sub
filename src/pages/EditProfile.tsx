@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { MobileLayout } from '@/components/layout/MobileLayout';
 import { ArrowLeft, Camera, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -14,6 +14,8 @@ export default function EditProfile() {
   const navigate = useNavigate();
   const { profile, refreshProfile } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [formData, setFormData] = useState({
     full_name: profile?.full_name || '',
     phone: profile?.phone || '',
@@ -56,6 +58,55 @@ export default function EditProfile() {
     }
   };
 
+  const handleAvatarClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !profile?.user_id) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image must be smaller than 5MB');
+      return;
+    }
+
+    setUploadingAvatar(true);
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const path = `${profile.user_id}/avatar-${Date.now()}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (uploadError) throw uploadError;
+
+      const { data: signed, error: signError } = await supabase.storage
+        .from('avatars')
+        .createSignedUrl(path, 60 * 60 * 24 * 365 * 5);
+      if (signError) throw signError;
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ avatar_url: signed.signedUrl })
+        .eq('id', profile.id);
+      if (updateError) throw updateError;
+
+      await refreshProfile();
+      toast.success('Profile photo updated');
+    } catch (err: any) {
+      console.error('Avatar upload failed:', err);
+      toast.error(err?.message || 'Failed to upload photo');
+    } finally {
+      setUploadingAvatar(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <MobileLayout showNav={false}>
       <div className="safe-area-top px-4 py-6">
@@ -79,11 +130,35 @@ export default function EditProfile() {
                 {profile?.full_name ? getInitials(profile.full_name) : 'U'}
               </AvatarFallback>
             </Avatar>
-            <button className="absolute bottom-0 right-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center shadow-lg">
-              <Camera className="w-4 h-4 text-primary-foreground" />
+            <button
+              type="button"
+              onClick={handleAvatarClick}
+              disabled={uploadingAvatar}
+              className="absolute bottom-0 right-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center shadow-lg disabled:opacity-60"
+              aria-label="Change profile photo"
+            >
+              {uploadingAvatar ? (
+                <Loader2 className="w-4 h-4 text-primary-foreground animate-spin" />
+              ) : (
+                <Camera className="w-4 h-4 text-primary-foreground" />
+              )}
             </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleAvatarChange}
+            />
           </div>
-          <p className="text-sm text-muted-foreground mt-2">Tap to change photo</p>
+          <button
+            type="button"
+            onClick={handleAvatarClick}
+            disabled={uploadingAvatar}
+            className="text-sm text-muted-foreground mt-2 underline-offset-2 hover:underline disabled:opacity-60"
+          >
+            {uploadingAvatar ? 'Uploading…' : 'Tap to change photo'}
+          </button>
         </div>
 
         {/* Form */}

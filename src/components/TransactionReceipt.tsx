@@ -1,6 +1,6 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, XCircle, Clock, Share2, X, Phone, Mail, Download } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Share2, X, Phone, Mail, Download, FileText, Plus, Gift, ChevronLeft } from 'lucide-react';
 import { getEffectiveTransactionStatus, TransactionMetadata } from '@/lib/transactionStatus';
 import { format } from 'date-fns';
 import html2canvas from 'html2canvas';
@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { Capacitor } from '@capacitor/core';
 import { Share } from '@capacitor/share';
 import { Filesystem, Directory } from '@capacitor/filesystem';
+import { useNavigate } from 'react-router-dom';
 import logo from '@/assets/sm-data-sub-logo.jpeg';
 
 // Import network logos
@@ -48,6 +49,8 @@ interface TransactionReceiptProps {
 
 export function TransactionReceipt({ open, onClose, transaction }: TransactionReceiptProps) {
   const receiptRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  const [showDetails, setShowDetails] = useState(false);
   
   const generateTransactionId = () => {
     const dateStr = format(transaction.date, 'yyyyMMdd');
@@ -183,28 +186,113 @@ ${transaction.type === 'data' && transaction.dataPlan ? `📦 Data Plan: ${trans
 
   if (!open) return null;
 
+  const effectiveStatus = transaction.status
+    ? getEffectiveTransactionStatus(transaction.status, transaction.metadata as TransactionMetadata)
+    : 'completed';
+  const isSuccess = effectiveStatus === 'completed';
+  const isFailed = effectiveStatus === 'failed';
+  const statusColor = isSuccess ? 'bg-red-500' : isFailed ? 'bg-red-500' : 'bg-yellow-500';
+  const statusTitle = isSuccess
+    ? (transaction.type === 'data' ? 'Data Purchase Successful' : 'Airtime Purchase Successful')
+    : isFailed ? 'Transaction Failed' : 'Transaction Pending';
+  const StatusIconTop = isSuccess ? CheckCircle : isFailed ? XCircle : Clock;
+
   return (
-    <div className="fixed inset-0 z-50 flex flex-col">
-      {/* Backdrop - top half */}
-      <div className="flex-1 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      
-      {/* Receipt Panel - bottom half */}
-      <div className="bg-gray-100 rounded-t-3xl max-h-[85vh] overflow-hidden animate-in slide-in-from-bottom duration-300">
-        {/* Handle bar */}
-        <div className="flex justify-center pt-3 pb-2">
-          <div className="w-10 h-1 rounded-full bg-gray-300" />
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-50 animate-in fade-in duration-200">
+      {/* Full-screen Receipt Panel */}
+      <div className="flex-1 overflow-hidden relative">
+
+        {/* Top bar with Done */}
+        <div className="flex items-center justify-between px-4 pb-2">
+          {showDetails ? (
+            <button onClick={() => setShowDetails(false)} className="flex items-center gap-1 text-gray-700 text-sm font-medium">
+              <ChevronLeft className="w-4 h-4" /> Back
+            </button>
+          ) : <span className="w-12" />}
+          <button onClick={onClose} className="text-red-600 font-semibold text-base px-2 py-1">
+            Done
+          </button>
         </div>
-        
-        {/* Close button */}
-        <button 
-          onClick={onClose}
-          className="absolute right-4 top-4 z-20 p-2 rounded-full bg-gray-200 hover:bg-gray-300 transition-colors"
-        >
-          <X className="w-4 h-4 text-gray-600" />
-        </button>
 
         {/* Scrollable content */}
-        <div className="overflow-y-auto max-h-[calc(85vh-40px)] pb-6 px-4">
+        <div className="overflow-y-auto h-full pb-6 px-4">
+          {!showDetails ? (
+            <>
+              {/* Opay-style success summary */}
+              <div className="flex flex-col items-center text-center pt-2 pb-6">
+                <div className={`w-16 h-16 rounded-full ${statusColor} flex items-center justify-center shadow-lg mb-4`}>
+                  <StatusIconTop className="w-9 h-9 text-white" strokeWidth={2.5} />
+                </div>
+                <h2 className="text-xl font-semibold text-gray-800 mb-2">{statusTitle}</h2>
+                <p className="text-3xl font-bold text-gray-900">
+                  ₦{transaction.amount.toLocaleString()}.00
+                </p>
+              </div>
+
+              {/* Info banner */}
+              <div className="bg-white rounded-2xl px-5 py-4 mb-4 shadow-sm">
+                <p className="text-center text-sm text-gray-600 leading-relaxed">
+                  {isSuccess
+                    ? `Your ${transaction.type === 'data' ? (transaction.dataPlan || 'data bundle') : 'airtime'} has been delivered to ${transaction.phoneNumber} successfully.`
+                    : isFailed
+                      ? 'This transaction did not go through. If your wallet was debited, it has been refunded automatically.'
+                      : 'This transaction is being processed. You will be notified once it is complete.'}
+                </p>
+              </div>
+
+              {/* Action grid - Opay style */}
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <button
+                  onClick={handleShare}
+                  className="bg-white rounded-2xl p-4 flex items-center gap-3 shadow-sm active:scale-[0.98] transition-transform"
+                >
+                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                    <Share2 className="w-5 h-5 text-red-600" />
+                  </div>
+                  <span className="text-sm font-semibold text-gray-800">Share Receipt</span>
+                </button>
+                <button
+                  onClick={() => { onClose(); navigate('/add-money'); }}
+                  className="bg-white rounded-2xl p-4 flex items-center gap-3 shadow-sm active:scale-[0.98] transition-transform"
+                >
+                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                    <Plus className="w-5 h-5 text-red-600" />
+                  </div>
+                  <span className="text-sm font-semibold text-gray-800">Add Money</span>
+                </button>
+                <button
+                  onClick={() => { onClose(); navigate('/referral'); }}
+                  className="bg-white rounded-2xl p-4 flex items-center gap-3 shadow-sm active:scale-[0.98] transition-transform"
+                >
+                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                    <Gift className="w-5 h-5 text-red-600" />
+                  </div>
+                  <span className="text-sm font-semibold text-gray-800">Refer & Earn</span>
+                </button>
+                <button
+                  onClick={() => setShowDetails(true)}
+                  className="bg-white rounded-2xl p-4 flex items-center gap-3 shadow-sm active:scale-[0.98] transition-transform"
+                >
+                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                    <FileText className="w-5 h-5 text-red-600" />
+                  </div>
+                  <span className="text-sm font-semibold text-gray-800">View Details</span>
+                </button>
+              </div>
+
+              {/* Hidden rich receipt used for screenshot share */}
+              <div className="absolute -left-[10000px] top-0" aria-hidden="true">
+                <div ref={receiptRef} className="bg-white w-[360px]">
+                  <RichReceiptBody
+                    transaction={transaction}
+                    transactionId={transactionId}
+                    networkKey={networkKey}
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
           {/* Receipt Card */}
           <div ref={receiptRef} className="bg-white rounded-2xl shadow-xl overflow-hidden">
             {/* Header with Logo */}
@@ -246,7 +334,7 @@ ${transaction.type === 'data' && transaction.dataPlan ? `📦 Data Plan: ${trans
                 const isSuccess = effectiveStatus === 'completed';
                 const isFailed = effectiveStatus === 'failed';
                 const bannerGradient = isSuccess 
-                  ? 'from-green-500 to-emerald-500 shadow-green-500/20' 
+                  ? 'from-red-500 to-red-600 shadow-red-500/20' 
                   : isFailed 
                     ? 'from-red-500 to-red-600 shadow-red-500/20' 
                     : 'from-yellow-500 to-amber-500 shadow-yellow-500/20';
@@ -372,8 +460,68 @@ ${transaction.type === 'data' && transaction.dataPlan ? `📦 Data Plan: ${trans
               Share
             </Button>
           </div>
+            </>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Extracted rich receipt body so it can be reused for the hidden share-image render
+function RichReceiptBody({ transaction, transactionId, networkKey }: { transaction: TransactionReceiptProps['transaction']; transactionId: string; networkKey: string; }) {
+  const effectiveStatus = transaction.status
+    ? getEffectiveTransactionStatus(transaction.status, transaction.metadata as TransactionMetadata)
+    : 'completed';
+  const isSuccess = effectiveStatus === 'completed';
+  const isFailed = effectiveStatus === 'failed';
+  const bannerGradient = isSuccess ? 'from-red-500 to-red-600' : isFailed ? 'from-red-500 to-red-600' : 'from-yellow-500 to-amber-500';
+  const StatusIcon = isSuccess ? CheckCircle : isFailed ? XCircle : Clock;
+  const statusText = isSuccess ? 'TRANSACTION SUCCESSFUL' : isFailed ? 'TRANSACTION FAILED' : 'TRANSACTION PENDING';
+  return (
+    <div>
+      <div className="pt-5 pb-4 px-5 text-center bg-gradient-to-b from-gray-50 to-white">
+        <div className="flex items-center justify-center gap-3 mb-3">
+          <div className="w-12 h-12 rounded-full overflow-hidden ring-2 ring-primary/20 shadow-md">
+            <img src={logo} alt="SM Data Sub" className="w-full h-full object-cover" />
+          </div>
+          <div className="text-left">
+            <h2 className="text-lg font-black text-primary tracking-tight">SM DATA SUB</h2>
+            <p className="text-[9px] text-muted-foreground tracking-[0.15em] uppercase">Transaction Receipt</p>
+          </div>
+        </div>
+      </div>
+      <div className={`mx-4 mb-4 bg-gradient-to-r ${bannerGradient} text-white py-3 px-4 rounded-xl text-center font-bold text-sm flex items-center justify-center gap-2`}>
+        <StatusIcon className="w-4 h-4" /> {statusText}
+      </div>
+      <div className="px-4 pb-4">
+        <div className="bg-gray-50 rounded-xl p-3">
+          <Row label="Trans. ID" value={transactionId} mono />
+          <Row label="Date & Time" value={format(transaction.date, 'dd MMM yyyy, hh:mm a')} />
+          <Row label="Phone" value={transaction.phoneNumber} mono />
+          <Row label="Network" value={transaction.network} />
+          {transaction.type === 'data' && transaction.dataPlan && (
+            <Row label="Data Plan" value={transaction.dataPlan} />
+          )}
+          <Row label="Service" value={transaction.type} />
+          <div className="flex justify-between items-center pt-3">
+            <span className="text-sm text-gray-600 font-medium">Amount Paid</span>
+            <span className="text-xl font-black text-primary">₦{transaction.amount.toLocaleString()}.00</span>
+          </div>
+        </div>
+      </div>
+      <div className="bg-gradient-to-r from-red-600 to-red-500 py-3 px-4 text-center text-white text-xs font-bold">
+        Support: 09050799603 • www.smdatasub.com.ng
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex justify-between items-center py-2.5 border-b border-dashed border-gray-200">
+      <span className="text-[11px] text-gray-500 uppercase tracking-wide">{label}</span>
+      <span className={`text-xs font-semibold text-gray-800 ${mono ? 'font-mono' : ''}`}>{value}</span>
     </div>
   );
 }

@@ -1,43 +1,38 @@
-import { 
-  Wifi, 
-  Phone, 
-  Zap, 
-  Tv, 
-  Gift,
-  BookOpen,
-  Coins,
-  Trophy
-} from 'lucide-react';
+import { Wifi, Phone, Zap, Tv, BookOpen, Globe, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const services = [
-  { icon: Phone, label: 'Airtime', path: '/airtime', color: 'bg-green-100 text-green-600' },
-  { icon: Wifi, label: 'Data', path: '/data', color: 'bg-purple-100 text-purple-600' },
-  { icon: Zap, label: 'Electricity', path: '/electricity', color: 'bg-yellow-100 text-yellow-600' },
-  { icon: Tv, label: 'TV Sub', path: '/tv', color: 'bg-red-100 text-red-600' },
-  { icon: BookOpen, label: 'Exam Pin', path: '/exam-pin', color: 'bg-indigo-100 text-indigo-600' },
-  { icon: Coins, label: 'Cashback', path: '/cashback', color: 'bg-orange-100 text-orange-600' },
-  { icon: Gift, label: 'Refer & Earn', path: '/referral', color: 'bg-pink-100 text-pink-600' },
-  { icon: Trophy, label: 'Reseller Promo', path: '/reseller-promo', color: 'bg-amber-100 text-amber-600' },
+  { icon: Phone, label: 'Airtime', path: '/airtime', color: 'text-emerald-500' },
+  { icon: Wifi, label: 'Data', path: '/data', color: 'text-purple-500' },
+  { icon: Zap, label: 'Electricity', path: '/electricity', color: 'text-amber-500' },
+  { icon: Tv, label: 'TV Sub', path: '/tv', color: 'text-primary' },
+  { icon: BookOpen, label: 'Exam Pin', path: '/exam-pin', color: 'text-indigo-500' },
+  { icon: Globe, label: 'Internet', path: '/data', color: 'text-secondary' },
 ];
 
 export function ServicesGrid() {
   const navigate = useNavigate();
 
   return (
-    <div className="px-4 py-6">
-      <h3 className="text-sm font-semibold text-foreground mb-4">Services</h3>
-      <div className="grid grid-cols-4 md:grid-cols-4 gap-4 md:gap-6">
+    <div className="px-4 md:px-6 py-5">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-base font-bold text-foreground">All Services</h3>
+        <button
+          onClick={() => navigate('/services')}
+          className="text-xs font-semibold text-primary flex items-center gap-0.5"
+        >
+          See All <ChevronRight className="w-3 h-3" />
+        </button>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
         {services.map(({ icon: Icon, label, path, color }) => (
           <button
-            key={path}
+            key={label}
             onClick={() => navigate(path)}
-            className="flex flex-col items-center gap-2 group"
+            className="bg-card border border-border/60 rounded-xl shadow-sm flex flex-col items-center justify-center py-3.5 gap-1.5 hover:shadow-md hover:-translate-y-0.5 active:scale-95 transition-all"
           >
-            <div className={`w-12 h-12 md:w-14 md:h-14 rounded-xl ${color} flex items-center justify-center transition-transform group-hover:scale-105`}>
-              <Icon className="w-5 h-5 md:w-6 md:h-6" />
-            </div>
-            <span className="text-xs md:text-sm text-foreground font-medium text-center">{label}</span>
+            <Icon className={`w-6 h-6 ${color}`} strokeWidth={2.2} />
+            <span className="text-[11px] font-semibold text-foreground">{label}</span>
           </button>
         ))}
       </div>

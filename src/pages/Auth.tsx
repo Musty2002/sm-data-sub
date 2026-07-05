@@ -57,6 +57,32 @@ export default function Auth() {
     }
   }, [isLogin]);
 
+  // Auto-apply referral code from URL (?ref=CODE) or stored value, switching to signup
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlRef = params.get('ref') || params.get('referral');
+      const stored = localStorage.getItem('pending_referral_code');
+      const refCode = (urlRef || stored || '').trim().toUpperCase();
+      if (refCode) {
+        localStorage.setItem('pending_referral_code', refCode);
+        setFormData(prev => ({ ...prev, referralCode: refCode }));
+        // If user arrived via referral link and has no prior session here, switch to signup
+        if (urlRef && !getLastLoggedInUser()) {
+          setIsLogin(false);
+          setIsReturningUser(false);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Clear stored referral code after successful signup
+  const clearPendingReferral = () => {
+    try { localStorage.removeItem('pending_referral_code'); } catch { /* ignore */ }
+  };
+
   const handleSwitchUser = () => {
     setIsReturningUser(false);
     setFormData(prev => ({ ...prev, identifier: '', password: '' }));
@@ -173,6 +199,7 @@ export default function Auth() {
           }
           // Save the user for next time
           setLastLoggedInUser(formData.email);
+          clearPendingReferral();
           toast({
             title: 'Welcome!',
             description: 'Your account has been created successfully.',

@@ -82,17 +82,25 @@ Deno.serve(async (req) => {
     }
 
     const receiverAccountNumber = webhookData.receiver.account_number;
-    const amountPaid = webhookData.settlement_amount; // Use settlement amount (after fees)
+    const amountPaid = Number(webhookData.settlement_amount); // Use settlement amount (after fees)
     const transactionId = webhookData.transaction_id;
+
+    if (!transactionId || !amountPaid || amountPaid <= 0) {
+      console.error("Invalid webhook payload", { transactionId, amountPaid });
+      return new Response(
+        JSON.stringify({ error: "Invalid payload" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     console.log(`Processing payment: ${amountPaid} to account ${receiverAccountNumber}, txn: ${transactionId}`);
 
-    // Find the user profile by account number
+    // Find the user profile by account number (use maybeSingle to avoid PGRST116 throws)
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("user_id, full_name")
       .eq("account_number", receiverAccountNumber)
-      .single();
+      .maybeSingle();
 
     if (profileError || !profile) {
       console.error("Profile not found for account:", receiverAccountNumber, profileError);
@@ -109,7 +117,7 @@ Deno.serve(async (req) => {
       .from("transactions")
       .select("id")
       .eq("reference", transactionId)
-      .single();
+      .maybeSingle();
 
     if (existingTxn) {
       console.log("Transaction already processed:", transactionId);
@@ -124,7 +132,7 @@ Deno.serve(async (req) => {
       .from("wallets")
       .select("id, balance")
       .eq("user_id", profile.user_id)
-      .single();
+      .maybeSingle();
 
     if (walletError || !wallet) {
       console.error("Wallet not found:", walletError);
@@ -134,7 +142,8 @@ Deno.serve(async (req) => {
       );
     }
 
-    const newBalance = wallet.balance + amountPaid;
+    // Cast numeric -> Number; supabase returns numeric as a STRING, so `+` would concat.
+    const newBalance = Number(wallet.balance) + amountPaid;
 
     // Update wallet balance
     const { error: updateError } = await supabase

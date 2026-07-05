@@ -60,13 +60,15 @@ export default function Referral() {
   const shareReferralCode = async () => {
     if (!profile?.referral_code) return;
 
-    const shareText = `Join SM Data Sub using my referral code: ${profile.referral_code} and get ₦100 bonus when you buy at least 1GB of data! Download now and start saving on data, airtime, and bills.`;
+    const inviteLink = `https://smdatasub.com.ng/?ref=${profile.referral_code}`;
+    const shareText = `Join SM Data Sub using my referral code: ${profile.referral_code} and get ₦100 bonus when you buy at least 1GB of data!\n\nDownload the app here: ${inviteLink}\n\nYour referral code will be applied automatically.`;
 
     if (navigator.share) {
       try {
         await navigator.share({
-          title: 'Ramadan Data Sub Referral',
+          title: 'SM Data Sub Referral',
           text: shareText,
+          url: inviteLink,
         });
       } catch {
         copyReferralCode();

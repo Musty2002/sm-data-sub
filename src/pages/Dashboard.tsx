@@ -5,7 +5,7 @@ import { ServicesGrid } from '@/components/dashboard/ServicesGrid';
 import { RecentTransactions } from '@/components/dashboard/RecentTransactions';
 import { PromoPopup } from '@/components/PromoPopup';
 import { TransactionPinDialog, isTransactionPinSetup } from '@/components/auth/PinSetupDialog';
-import { Bell, RefreshCw } from 'lucide-react';
+import { Bell, RefreshCw, Menu } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -13,7 +13,7 @@ import logo from '@/assets/sm-data-sub-logo.jpeg';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { refreshWallet, refreshProfile, refreshCashbackWallet } = useAuth();
+  const { refreshWallet, refreshProfile, refreshCashbackWallet, profile } = useAuth();
   const { toast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -131,15 +131,40 @@ export default function Dashboard() {
 
         {/* Header */}
         <div className="flex items-center justify-between px-4 md:px-6 py-4">
-          <img src={logo} alt="SM Data Sub" className="h-10 w-10 rounded-full object-cover border-2 border-secondary" />
-          <h1 className="text-lg font-bold text-secondary">SM Data Sub</h1>
-          <button 
-            onClick={() => navigate('/notifications')}
-            className="relative w-10 h-10 flex items-center justify-center rounded-full bg-muted hover:bg-muted/80 transition-colors"
-          >
-            <Bell className="w-5 h-5 text-foreground" />
-            <span className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full"></span>
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate('/services')}
+              className="w-9 h-9 flex items-center justify-center -ml-1"
+              aria-label="Menu"
+            >
+              <Menu className="w-6 h-6 text-foreground" />
+            </button>
+            <img src={logo} alt="SM Data Sub" className="h-9 w-9 rounded-full object-cover border-2 border-primary" />
+            <h1 className="text-base font-extrabold text-secondary tracking-tight">SM DATA SUB</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/notifications')}
+              className="relative w-10 h-10 flex items-center justify-center"
+              aria-label="Notifications"
+            >
+              <Bell className="w-6 h-6 text-foreground" />
+              <span className="absolute top-2 right-2 w-2 h-2 bg-primary rounded-full ring-2 ring-background"></span>
+            </button>
+            <button
+              onClick={() => navigate('/profile')}
+              className="w-9 h-9 rounded-full bg-muted overflow-hidden border-2 border-secondary/30"
+              aria-label="Profile"
+            >
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-secondary/10 text-secondary text-sm font-bold">
+                  {(profile?.full_name || 'U').charAt(0).toUpperCase()}
+                </div>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Account Card */}

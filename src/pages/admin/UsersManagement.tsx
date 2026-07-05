@@ -32,7 +32,8 @@ import {
   UserCheck,
   Smartphone,
   Monitor,
-  History
+  History,
+  Phone
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -86,6 +87,10 @@ export default function UsersManagement() {
   const [sessionsDialogOpen, setSessionsDialogOpen] = useState(false);
   const [loginSessions, setLoginSessions] = useState<LoginSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+
+  // Fix phone / provision account state
+  const [phoneDialogOpen, setPhoneDialogOpen] = useState(false);
+  const [newPhone, setNewPhone] = useState('');
 
   useEffect(() => {
     fetchUsers();
@@ -266,6 +271,33 @@ export default function UsersManagement() {
     }
   };
 
+  const handleFixPhoneAndProvision = async () => {
+    if (!selectedUser) return;
+    const trimmed = newPhone.trim();
+    if (!trimmed) {
+      toast.error('Enter a phone number');
+      return;
+    }
+    setProcessing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-fix-user-account', {
+        body: { userId: selectedUser.user_id, phone: trimmed },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+
+      toast.success(`Account provisioned: ${(data as any).accountNumber}`);
+      setPhoneDialogOpen(false);
+      setNewPhone('');
+      fetchUsers();
+    } catch (e: any) {
+      console.error('Fix phone error:', e);
+      toast.error(e?.message || 'Failed to provision account');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const filteredUsers = users.filter(user => 
     user.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     user.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -393,6 +425,14 @@ export default function UsersManagement() {
                             }}>
                               <History className="w-4 h-4 mr-2" />
                               View Login Sessions
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => {
+                              setSelectedUser(user);
+                              setNewPhone(user.phone || '');
+                              setPhoneDialogOpen(true);
+                            }}>
+                              <Phone className="w-4 h-4 mr-2" />
+                              Fix Phone & Provision Account
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => toggleAdminRole(user)}>
                               <UserCog className="w-4 h-4 mr-2" />
@@ -546,6 +586,55 @@ export default function UsersManagement() {
                 </>
               ) : (
                 blockAction === 'block' ? 'Block User' : 'Unblock User'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Fix Phone & Provision Account Dialog */}
+      <Dialog open={phoneDialogOpen} onOpenChange={setPhoneDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Phone className="w-5 h-5" />
+              Fix Phone & Provision Account
+            </DialogTitle>
+            <DialogDescription>
+              Update {selectedUser?.full_name}'s phone number and generate a new Paga virtual account in one step.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Current phone on file</Label>
+              <p className="font-mono text-sm">{selectedUser?.phone || '—'}</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="newPhone">New phone number</Label>
+              <Input
+                id="newPhone"
+                placeholder="08012345678"
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                maxLength={14}
+              />
+              <p className="text-xs text-muted-foreground">
+                Must be a valid 11-digit Nigerian mobile starting with 070, 080, 081, or 090–091.
+              </p>
+            </div>
+            {selectedUser?.account_number && (
+              <div className="bg-secondary rounded-lg p-3 text-sm text-muted-foreground">
+                ⚠️ This user already has account <span className="font-mono">{selectedUser.account_number}</span>. A new one will replace it.
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPhoneDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleFixPhoneAndProvision} disabled={processing || !newPhone.trim()}>
+              {processing ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Provisioning…</>
+              ) : (
+                'Update & Provision'
               )}
             </Button>
           </DialogFooter>

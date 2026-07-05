@@ -99,6 +99,12 @@ export default function Airtime() {
     fetchNetworks();
   }, []);
 
+  // Prefill last used phone number
+  useEffect(() => {
+    const saved = localStorage.getItem('lastAirtimePhone');
+    if (saved) setPhoneNumber(saved);
+  }, []);
+
   // Auto-detect network from phone number on step 2
   useEffect(() => {
     if (step !== 2 || networks.length === 0) return;
@@ -113,27 +119,13 @@ export default function Airtime() {
 
   const fetchNetworks = async () => {
     try {
-      const [isquareResponse, rgcResponse] = await Promise.all([
-        supabase.functions.invoke('isquare-services', {
-          body: { action: 'get-services', serviceType: 'airtime' }
-        }),
-        supabase.functions.invoke('rgc-services', {
-          body: { action: 'get-services', serviceType: 'airtime' }
-        }),
-      ]);
+      const isquareResponse = await supabase.functions.invoke('isquare-services', {
+        body: { action: 'get-services', serviceType: 'airtime' }
+      });
 
       let allNetworks: AirtimeService[] = [];
-      if (rgcResponse.data?.success && Array.isArray(rgcResponse.data?.data)) {
-        const rgcNetworks = (rgcResponse.data.data as AirtimeService[]).map((n) => ({ ...n, provider: 'rgc' as const }));
-        allNetworks = [...allNetworks, ...rgcNetworks];
-      }
-      if (isquareResponse.data?.success && isquareResponse.data?.data) {
-        const isquareNetworks = isquareResponse.data.data.map((n: AirtimeService) => ({ ...n, provider: 'isquare' as const }));
-        // RGC is the primary airtime provider; only keep iSquare for missing categories.
-        const existingCats = new Set(allNetworks.map((n) => n.category));
-        for (const n of isquareNetworks) {
-          if (!existingCats.has(n.category)) allNetworks.push(n);
-        }
+      if (isquareResponse.data?.success && Array.isArray(isquareResponse.data?.data)) {
+        allNetworks = (isquareResponse.data.data as AirtimeService[]).map((n) => ({ ...n, provider: 'isquare' as const }));
       }
       setNetworks(allNetworks);
     } catch (error: any) {
@@ -197,30 +189,15 @@ export default function Airtime() {
     const normalizedPhone = normalizePhoneNumber(phoneNumber);
     
     try {
-      const callProvider = async (provider: 'isquare' | 'rgc') => {
-        const body = provider === 'rgc'
-          ? {
-              action: 'purchase',
-              serviceType: 'airtime',
-              network: selectedNetwork.category, // RGC expects category name (MTN/AIRTEL/GLO/9MOBILE)
-              network_id: selectedNetwork.product_id,
-              amount: purchaseAmount,
-              mobile_number: normalizedPhone,
-            }
-          : {
-              action: 'purchase',
-              serviceType: 'airtime',
-              network: selectedNetwork.product_id,
-              amount: purchaseAmount,
-              phone_number: normalizedPhone,
-            };
-        return supabase.functions.invoke(
-          provider === 'rgc' ? 'rgc-services' : 'isquare-services',
-          { body }
-        );
-      };
-
-      let { data, error } = await callProvider('rgc');
+      const { data, error } = await supabase.functions.invoke('isquare-services', {
+        body: {
+          action: 'purchase',
+          serviceType: 'airtime',
+          network: selectedNetwork.product_id,
+          amount: purchaseAmount,
+          phone_number: normalizedPhone,
+        },
+      });
       let message: string | undefined;
       if (error) message = await getEdgeFunctionErrorMessage(error);
       const primaryFailed = !!error || !data?.success;
@@ -236,8 +213,8 @@ export default function Airtime() {
         amount: purchaseAmount,
         type: 'airtime',
       });
+      try { localStorage.setItem('lastAirtimePhone', normalizedPhone); } catch {}
       setShowReceipt(true);
-      setPhoneNumber('');
       setAmount('');
       setSelectedNetwork(null);
       setStep(1);

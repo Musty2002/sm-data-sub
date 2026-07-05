@@ -91,6 +91,12 @@ export default function Data() {
     fetchDataBundles();
   }, []);
 
+  // Prefill last used phone number
+  useEffect(() => {
+    const saved = localStorage.getItem('lastDataPhone');
+    if (saved) setPhoneNumber(saved);
+  }, []);
+
   const fetchDataBundles = async () => {
     try {
       setLoading(true);
@@ -215,9 +221,8 @@ export default function Data() {
         type: 'data',
         dataPlan: selectedBundle.name,
       });
+      try { localStorage.setItem('lastDataPhone', phoneNumber); } catch {}
       setShowReceipt(true);
-      
-      setPhoneNumber('');
       setSelectedBundle(null);
       setSelectedCategory(null);
       setSelectedNetwork(null);

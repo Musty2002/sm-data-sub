@@ -301,6 +301,7 @@ export type Database = {
           referred_by: string | null
           updated_at: string
           user_id: string
+          virtual_account_bank: string | null
           virtual_account_name: string | null
         }
         Insert: {
@@ -319,6 +320,7 @@ export type Database = {
           referred_by?: string | null
           updated_at?: string
           user_id: string
+          virtual_account_bank?: string | null
           virtual_account_name?: string | null
         }
         Update: {
@@ -337,6 +339,7 @@ export type Database = {
           referred_by?: string | null
           updated_at?: string
           user_id?: string
+          virtual_account_bank?: string | null
           virtual_account_name?: string | null
         }
         Relationships: [
@@ -606,6 +609,16 @@ export type Database = {
         Returns: boolean
       }
       is_user_blocked: { Args: { _user_id: string }; Returns: boolean }
+      process_aspfiy_deposit: {
+        Args: {
+          p_amount: number
+          p_description: string
+          p_metadata: Json
+          p_reference: string
+          p_user_id: string
+        }
+        Returns: number
+      }
     }
     Enums: {
       app_role: "admin" | "user"
