@@ -29,7 +29,9 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const aspfiySecretKey = Deno.env.get("ASPFIY_SECRET_KEY")!;
+    const paymentPointApiKey = Deno.env.get("PAYMENTPOINT_API_KEY")!;
+    const paymentPointApiSecret = Deno.env.get("PAYMENTPOINT_API_SECRET")!;
+    const paymentPointBusinessId = Deno.env.get("PAYMENTPOINT_BUSINESS_ID")!;
 
     // Validate JWT
     const authHeader = req.headers.get("Authorization");
@@ -102,7 +104,7 @@ Deno.serve(async (req) => {
 
     const { data: existingProfile, error: profileLookupError } = await supabase
       .from("profiles")
-      .select("id, account_number, virtual_account_name, full_name, phone, email")
+      .select("id, account_number, virtual_account_name, virtual_account_bank, full_name, phone, email")
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -111,7 +113,10 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "Failed to check profile", details: profileLookupError }, 500);
     }
 
-    if (!force && existingProfile?.virtual_account_name && existingProfile?.account_number) {
+    const hasPalmPay =
+      (existingProfile?.virtual_account_bank || "").toLowerCase().includes("palmpay");
+
+    if (!force && hasPalmPay && existingProfile?.virtual_account_name && existingProfile?.account_number) {
       return jsonResponse({
         success: true,
         alreadyExists: true,
@@ -185,49 +190,43 @@ Deno.serve(async (req) => {
       await supabase.from("user_roles").insert({ user_id: userId, role: "user" });
     }
 
-    console.log(`Creating virtual account for user: ${userId}, email: ${email}, phone: ${phoneNumber}`);
+    console.log(`Creating PaymentPoint (PalmPay) virtual account for user: ${userId}, email: ${email}, phone: ${phoneNumber}`);
 
-    // Split full name into first/last for Aspfiy
-    const nameParts = name.trim().split(/\s+/);
-    const firstName = nameParts[0] || "User";
-    const lastName = nameParts.slice(1).join(" ") || firstName;
-
-    // Use the user id as the merchant reference. On force-regenerate we MUST
-    // send a fresh reference, otherwise Aspfiy responds with "Reference already exist".
-    const reference = force ? `${userId}-${Date.now()}` : userId;
-    const webhookUrl = `${supabaseUrl}/functions/v1/aspfiy-webhook`;
-
-    const aspfiyResp = await fetch("https://api-v1.aspfiy.com/reserve-paga/", {
+    // Call PaymentPoint createVirtualAccount API (issues a PalmPay account)
+    const ppResp = await fetch("https://api.paymentpoint.co/api/v1/createVirtualAccount", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${aspfiySecretKey}`,
+        "Authorization": `Bearer ${paymentPointApiSecret}`,
+        "api-key": paymentPointApiKey,
         "Content-Type": "application/json",
         "Accept": "application/json",
       },
-      body: JSON.stringify({ email, reference, firstName, lastName, webhookUrl, phone: phoneNumber }),
+      body: JSON.stringify({
+        email,
+        name,
+        phoneNumber,
+        bankCode: ["20946"], // PalmPay
+        businessId: paymentPointBusinessId,
+      }),
     });
-    const rawText = await aspfiyResp.text();
-    let aspfiyData: any = {};
-    try { aspfiyData = JSON.parse(rawText); } catch { /* keep raw */ }
-    console.log(`Aspfiy reserve-paga status=${aspfiyResp.status}, body=`, rawText);
+    const rawText = await ppResp.text();
+    let ppData: any = {};
+    try { ppData = JSON.parse(rawText); } catch { /* keep raw */ }
+    console.log(`PaymentPoint status=${ppResp.status}, body=`, rawText);
 
-    if (!aspfiyResp.ok || aspfiyData?.status === false) {
-      return jsonResponse({ error: "Failed to create virtual account", details: aspfiyData || rawText }, 400);
+    if (!ppResp.ok || ppData?.status === "failed" || ppData?.status === false) {
+      return jsonResponse({ error: "Failed to create virtual account", details: ppData || rawText }, 400);
     }
 
-    // Parse account info from any of the common response shapes
-    const acct =
-      aspfiyData?.data?.account ||
-      aspfiyData?.data ||
-      aspfiyData?.account ||
-      aspfiyData ||
-      {};
+    // Prefer PalmPay from bankAccounts, fall back to first item
+    const bankAccounts: any[] = ppData?.bankAccounts || ppData?.data?.bankAccounts || [];
+    const palm = bankAccounts.find((a) =>
+      (a?.bankName || a?.bank_name || "").toLowerCase().includes("palmpay")
+    ) || bankAccounts[0] || {};
 
-    const accountNumber =
-      acct.account_number || acct.accountNumber || acct.accountNo || null;
-    const accountName =
-      acct.account_name || acct.accountName || `${firstName} ${lastName}`.trim();
-    const bankName = acct.bank_name || acct.bankName || "Paga";
+    const accountNumber = palm.accountNumber || palm.account_number || null;
+    const accountName = palm.accountName || palm.account_name || name;
+    const bankName = palm.bankName || palm.bank_name || "PalmPay";
 
     if (!accountNumber) {
       console.warn("Aspfiy did not return an account number in the response. Awaiting webhook.");

@@ -122,12 +122,12 @@ export default function AddMoney() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Bank Name</p>
-                      <p className="font-semibold text-foreground">
+                       <p className="font-semibold text-foreground">
                         {(() => {
-                          const b = profile?.virtual_account_bank || "";
-                          if (b.toLowerCase().includes("aspfiy")) return "Paga";
-                          if (b.toLowerCase().includes("palmpay")) return "PalmPay";
-                          return b;
+                          const b = (profile?.virtual_account_bank || "").toLowerCase();
+                          if (b.includes("palmpay")) return "PalmPay";
+                          if (b.includes("aspfiy") || b.includes("paga")) return "PalmPay";
+                          return profile?.virtual_account_bank || "PalmPay";
                         })()}
                       </p>
                     </div>
@@ -135,11 +135,7 @@ export default function AddMoney() {
                       variant="ghost"
                       size="icon"
                         onClick={() => {
-                          const b = profile?.virtual_account_bank || "";
-                          let display = b;
-                          if (b.toLowerCase().includes("aspfiy")) display = "Paga";
-                          else if (b.toLowerCase().includes("palmpay")) display = "PalmPay";
-                          copyToClipboard(display, "Bank name");
+                          copyToClipboard("PalmPay", "Bank name");
                         }}
                     >
                       <Copy className="w-4 h-4" />
@@ -169,12 +165,14 @@ export default function AddMoney() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Account Name</p>
-                      <p className="font-semibold text-foreground">ASPFIY</p>
+                      <p className="font-semibold text-foreground">
+                        {profile?.virtual_account_name || profile?.full_name || "User"}
+                      </p>
                     </div>
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => copyToClipboard('ASPFIY', 'Account name')}
+                      onClick={() => copyToClipboard(profile?.virtual_account_name || profile?.full_name || '', 'Account name')}
                     >
                       <Copy className="w-4 h-4" />
                     </Button>

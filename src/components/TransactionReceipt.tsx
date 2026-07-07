@@ -243,7 +243,7 @@ ${transaction.type === 'data' && transaction.dataPlan ? `📦 Data Plan: ${trans
               {/* Action grid - Opay style */}
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <button
-                  onClick={handleShare}
+                  onClick={() => setShowDetails(true)}
                   className="bg-white rounded-2xl p-4 flex items-center gap-3 shadow-sm active:scale-[0.98] transition-transform"
                 >
                   <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">

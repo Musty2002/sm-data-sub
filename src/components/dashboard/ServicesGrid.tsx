@@ -1,4 +1,4 @@
-import { Wifi, Phone, Zap, Tv, BookOpen, Globe, ChevronRight } from 'lucide-react';
+import { Wifi, Phone, Zap, Tv, BookOpen, Trophy, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const services = [
@@ -7,7 +7,7 @@ const services = [
   { icon: Zap, label: 'Electricity', path: '/electricity', color: 'text-amber-500' },
   { icon: Tv, label: 'TV Sub', path: '/tv', color: 'text-primary' },
   { icon: BookOpen, label: 'Exam Pin', path: '/exam-pin', color: 'text-indigo-500' },
-  { icon: Globe, label: 'Internet', path: '/data', color: 'text-secondary' },
+  { icon: Trophy, label: 'Reseller Promo', path: '/reseller-promo', color: 'text-amber-600' },
 ];
 
 export function ServicesGrid() {
