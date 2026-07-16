@@ -118,26 +118,15 @@ export default function Airtime() {
   }, [phoneNumber, networks, selectedNetwork?.category, step]);
 
   const fetchNetworks = async () => {
-    try {
-      const isquareResponse = await supabase.functions.invoke('isquare-services', {
-        body: { action: 'get-services', serviceType: 'airtime' }
-      });
-
-      let allNetworks: AirtimeService[] = [];
-      if (isquareResponse.data?.success && Array.isArray(isquareResponse.data?.data)) {
-        allNetworks = (isquareResponse.data.data as AirtimeService[]).map((n) => ({ ...n, provider: 'isquare' as const }));
-      }
-      setNetworks(allNetworks);
-    } catch (error: any) {
-      console.error('Error fetching networks:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Failed to load networks. Please try again.',
-      });
-    } finally {
-      setLoading(false);
-    }
+    // Bonanza network IDs: 1=MTN, 2=GLO, 3=9MOBILE, 4=AIRTEL
+    const bonanzaNetworks: AirtimeService[] = [
+      { id: 1, product_id: 1, service: 'AIRTIME', name: 'MTN', category: 'MTN', available: true },
+      { id: 4, product_id: 4, service: 'AIRTIME', name: 'AIRTEL', category: 'AIRTEL', available: true },
+      { id: 2, product_id: 2, service: 'AIRTIME', name: 'GLO', category: 'GLO', available: true },
+      { id: 3, product_id: 3, service: 'AIRTIME', name: '9MOBILE', category: '9MOBILE', available: true },
+    ];
+    setNetworks(bonanzaNetworks);
+    setLoading(false);
   };
 
   const handleNetworkSelect = (network: AirtimeService) => {
@@ -189,13 +178,13 @@ export default function Airtime() {
     const normalizedPhone = normalizePhoneNumber(phoneNumber);
     
     try {
-      const { data, error } = await supabase.functions.invoke('isquare-services', {
+      const { data, error } = await supabase.functions.invoke('bonanza-services', {
         body: {
           action: 'purchase',
           serviceType: 'airtime',
-          network: selectedNetwork.product_id,
+          network: selectedNetwork.category,
           amount: purchaseAmount,
-          phone_number: normalizedPhone,
+          mobile_number: normalizedPhone,
         },
       });
       let message: string | undefined;
