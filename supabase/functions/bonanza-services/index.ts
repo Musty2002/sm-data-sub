@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { validateUserAccount } from '../_shared/validate-account.ts';
 import { checkRateLimit } from '../_shared/rate-limit.ts';
+import { AmbiguousProviderError, classifyPurchaseFailure } from '../_shared/purchase-safety.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -40,11 +41,25 @@ async function bonanzaRequest(path: string, method: 'GET' | 'POST' = 'GET', body
   if (body && method === 'POST') options.body = JSON.stringify(body);
 
   console.log(`Bonanza ${method} ${path}`, body ? JSON.stringify(body) : '');
-  const res = await fetch(`${BONANZA_BASE_URL}${path}`, options);
+  let res: Response;
+  try {
+    res = await fetch(`${BONANZA_BASE_URL}${path}`, options);
+  } catch (e: any) {
+    throw new AmbiguousProviderError(`Network error contacting Bonanza: ${e?.message || 'unknown'}`);
+  }
   const text = await res.text();
   let data: any;
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { message: text }; }
+  let parsed = true;
+  try { data = text ? JSON.parse(text) : {}; } catch { parsed = false; data = { message: text }; }
   console.log(`Bonanza status ${res.status}`, JSON.stringify(data));
+
+  // Non-JSON body or 5xx: we can't tell if provider processed the request.
+  if (!parsed) {
+    throw new AmbiguousProviderError(`Unexpected Bonanza response (status ${res.status})`, { status: res.status, raw: text });
+  }
+  if (res.status >= 500) {
+    throw new AmbiguousProviderError(`Bonanza server error (${res.status})`, { status: res.status, raw: data });
+  }
 
   if (!res.ok || data?.Status === 'failed' || data?.status === 'failed' || data?.success === false) {
     const msg = data?.message || data?.api_response || data?.detail || `Bonanza request failed (${res.status})`;
@@ -255,13 +270,21 @@ Deno.serve(async (req) => {
       });
     } catch (err: any) {
       console.error('Bonanza purchase error', err);
+      const decision = classifyPurchaseFailure(err);
       if (amount > 0) {
-        await recordTransaction(supabase, userId, amount, serviceType, description, 'failed',
-          undefined, { error: err.message, provider: 'bonanza' });
-        await refundWallet(supabase, userId, amount);
+        await recordTransaction(supabase, userId, amount, serviceType, description, decision.status,
+          undefined, { error: err.message, provider: 'bonanza', unconfirmed: !decision.refund });
+        if (decision.refund) {
+          await refundWallet(supabase, userId, amount);
+        } else {
+          console.warn(`Bonanza ambiguous failure — wallet NOT refunded (user ${userId}, amount ${amount}): ${err.message}`);
+        }
       }
-      return new Response(JSON.stringify({ success: false, message: err.message }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      return new Response(JSON.stringify({
+        success: false, message: decision.userMessage, unconfirmed: !decision.refund,
+      }), {
+        status: decision.refund ? 400 : 202,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
   } catch (e: any) {
