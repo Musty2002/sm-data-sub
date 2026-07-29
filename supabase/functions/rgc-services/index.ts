@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { validateUserAccount } from '../_shared/validate-account.ts';
 import { checkRateLimit } from '../_shared/rate-limit.ts';
+import { AmbiguousProviderError, classifyPurchaseFailure } from '../_shared/purchase-safety.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -52,19 +53,33 @@ async function makeRGCRequest(endpoint: string, method: 'GET' | 'POST' = 'GET', 
   }
 
   console.log(`Making RGC request to: ${RGC_BASE_URL}${endpoint}`);
-  
-  const response = await fetch(`${RGC_BASE_URL}${endpoint}`, options);
+
+  let response: Response;
+  try {
+    response = await fetch(`${RGC_BASE_URL}${endpoint}`, options);
+  } catch (e: any) {
+    throw new AmbiguousProviderError(`Network error contacting RGC: ${e?.message || 'unknown'}`);
+  }
   const responseText = await response.text();
   let data: any;
+  let parsed = true;
   try {
     data = responseText ? JSON.parse(responseText) : {};
   } catch (_) {
+    parsed = false;
     data = { message: responseText || 'RGC API returned an invalid response' };
   }
-  
+
   console.log(`RGC response status: ${response.status}`);
   console.log(`RGC response data:`, JSON.stringify(data));
-  
+
+  if (!parsed) {
+    throw new AmbiguousProviderError(`Unexpected RGC response (status ${response.status})`, { status: response.status, raw: responseText });
+  }
+  if (response.status >= 500) {
+    throw new AmbiguousProviderError(`RGC server error (${response.status})`, { status: response.status, raw: data });
+  }
+
   if (!response.ok || data.success === false || data.status === false) {
     throw new Error(data.message || 'RGC API request failed');
   }
@@ -740,28 +755,45 @@ Deno.serve(async (req) => {
         });
 
       } catch (purchaseError: any) {
-        // If purchase fails after deduction, we need to refund
         console.error('Purchase failed:', purchaseError);
-        
-        // Record failed transaction
-        await recordTransaction(supabase, userId, amount, serviceType === 'cable' ? 'tv' : serviceType, description, 'failed', undefined, { error: purchaseError.message, provider: 'rgc' });
 
-        // Refund the wallet
-        const { data: wallet } = await supabase
-          .from('wallets')
-          .select('balance')
-          .eq('user_id', userId)
-          .single();
+        const decision = classifyPurchaseFailure(purchaseError);
+        const category = serviceType === 'cable' ? 'tv' : serviceType;
 
-        if (wallet) {
-          await supabase
+        await recordTransaction(
+          supabase,
+          userId,
+          amount,
+          category,
+          description,
+          decision.status,
+          undefined,
+          { error: purchaseError.message, provider: 'rgc', unconfirmed: !decision.refund },
+        );
+
+        if (decision.refund && amount > 0) {
+          const { data: wallet } = await supabase
             .from('wallets')
-            .update({ balance: wallet.balance + amount, updated_at: new Date().toISOString() })
-            .eq('user_id', userId);
+            .select('balance')
+            .eq('user_id', userId)
+            .single();
+
+          if (wallet) {
+            await supabase
+              .from('wallets')
+              .update({ balance: Number(wallet.balance) + Number(amount), updated_at: new Date().toISOString() })
+              .eq('user_id', userId);
+          }
+        } else {
+          console.warn(`RGC ambiguous failure — wallet NOT refunded (user ${userId}, amount ${amount}): ${purchaseError.message}`);
         }
 
-        return new Response(JSON.stringify({ success: false, message: purchaseError.message }), {
-          status: 400,
+        return new Response(JSON.stringify({
+          success: false,
+          message: decision.userMessage,
+          unconfirmed: !decision.refund,
+        }), {
+          status: decision.refund ? 400 : 202,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
