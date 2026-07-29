@@ -1,6 +1,10 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { validateUserAccount } from '../_shared/validate-account.ts';
 import { checkRateLimit } from '../_shared/rate-limit.ts';
+import {
+  AmbiguousProviderError,
+  classifyPurchaseFailure,
+} from '../_shared/purchase-safety.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -48,23 +52,49 @@ async function makeISquareRequest(endpoint: string, method: 'GET' | 'POST' = 'GE
   }
 
   console.log(`Making iSquare request to: ${ISQUARE_BASE_URL}${endpoint}`);
-  
-  const response = await fetch(`${ISQUARE_BASE_URL}${endpoint}`, options);
-  const data = await response.json();
+
+  let response: Response;
+  try {
+    response = await fetch(`${ISQUARE_BASE_URL}${endpoint}`, options);
+  } catch (e: any) {
+    // Network-level failure: provider may or may not have received the request.
+    throw new AmbiguousProviderError(
+      `Network error contacting iSquare: ${e?.message || 'unknown'}`,
+    );
+  }
+
+  const rawText = await response.text();
+  let data: any;
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    throw new AmbiguousProviderError(
+      `Unexpected iSquare response (status ${response.status})`,
+      { status: response.status, raw: rawText },
+    );
+  }
   
   console.log(`iSquare response status: ${response.status}`);
   console.log(`iSquare response data:`, JSON.stringify(data));
   
   if (!response.ok) {
+    // 5xx: server-side issue, could have partially processed — do NOT refund.
+    if (response.status >= 500) {
+      throw new AmbiguousProviderError(
+        `iSquare server error (${response.status})`,
+        { status: response.status, raw: data },
+      );
+    }
+
     // Detect invalid credentials early and surface a clear message
-    const rawText = JSON.stringify(data).toLowerCase();
+    const lower = JSON.stringify(data).toLowerCase();
     if (
       response.status === 401 ||
       response.status === 403 ||
-      rawText.includes('invalid username') ||
-      rawText.includes('invalid credentials') ||
-      rawText.includes('authentication failed') ||
-      rawText.includes('unauthorized')
+      lower.includes('invalid username') ||
+      lower.includes('invalid credentials') ||
+      lower.includes('authentication failed') ||
+      lower.includes('unauthorized')
     ) {
       throw new Error('Service temporarily unavailable: provider authentication failed. Please contact support.');
     }
@@ -670,34 +700,49 @@ Deno.serve(async (req) => {
 
       } catch (purchaseError: any) {
         console.error('Purchase failed:', purchaseError);
-        
+
+        const decision = classifyPurchaseFailure(purchaseError);
+
         await recordTransaction(
-          supabase, 
-          userId, 
-          amount, 
-          serviceType, 
-          description, 
-          'failed', 
-          undefined, 
-          { error: purchaseError.message, provider: 'isquare' }
+          supabase,
+          userId,
+          amount,
+          serviceType,
+          description,
+          decision.status,
+          undefined,
+          {
+            error: purchaseError.message,
+            provider: 'isquare',
+            unconfirmed: !decision.refund,
+          },
         );
 
-        // Refund the wallet
-        const { data: wallet } = await supabase
-          .from('wallets')
-          .select('balance')
-          .eq('user_id', userId)
-          .single();
-
-        if (wallet) {
-          await supabase
+        if (decision.refund && amount > 0) {
+          const { data: wallet } = await supabase
             .from('wallets')
-            .update({ balance: wallet.balance + amount, updated_at: new Date().toISOString() })
-            .eq('user_id', userId);
+            .select('balance')
+            .eq('user_id', userId)
+            .single();
+
+          if (wallet) {
+            await supabase
+              .from('wallets')
+              .update({ balance: Number(wallet.balance) + Number(amount), updated_at: new Date().toISOString() })
+              .eq('user_id', userId);
+          }
+        } else {
+          console.warn(
+            `iSquare ambiguous failure — wallet NOT refunded (user ${userId}, amount ${amount}): ${purchaseError.message}`,
+          );
         }
 
-        return new Response(JSON.stringify({ success: false, message: purchaseError.message }), {
-          status: 400,
+        return new Response(JSON.stringify({
+          success: false,
+          message: decision.userMessage,
+          unconfirmed: !decision.refund,
+        }), {
+          status: decision.refund ? 400 : 202,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
