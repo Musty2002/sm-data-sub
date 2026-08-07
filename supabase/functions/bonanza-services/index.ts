@@ -97,6 +97,20 @@ async function refundWallet(supabase: any, userId: string, amount: number) {
   }
 }
 
+// Read the provider-side wallet balance. Used to decide whether a "failed"
+// response actually cost us money upstream (provider delivered / debited us).
+async function getProviderBalance(): Promise<number | null> {
+  try {
+    const data = await bonanzaRequest('/user/');
+    const raw = data?.user?.Account_Balance ?? data?.user?.wallet_balance ?? data?.Account_Balance;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch (e) {
+    console.warn('Could not read Bonanza balance', e);
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
