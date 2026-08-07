@@ -138,6 +138,15 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Diagnostic: list recent provider-side orders (data or topup)
+    if (action === 'list-orders') {
+      const path = body?.kind === 'airtime' ? '/topup/' : '/data/';
+      const data = await bonanzaRequest(path);
+      return new Response(JSON.stringify({ success: true, data }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Public: fetch data plans list (endpoint convention on Bonanza-style APIs)
     if (action === 'get-services' && serviceType === 'data') {
       try {
