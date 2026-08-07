@@ -111,6 +111,38 @@ async function getProviderBalance(): Promise<number | null> {
   }
 }
 
+function digitsOnly(v: unknown) {
+  return String(v ?? '').replace(/\D/g, '');
+}
+
+// Look up the actual order on the provider side, matched by phone number +
+// plan/amount within a short time window. This is race-safe: unlike comparing
+// wallet balances, a concurrent purchase by another user can't be mistaken for
+// this one.
+async function findProviderOrder(
+  kind: 'data' | 'airtime',
+  mobileNumber: string,
+  match: { plan?: number; amount?: number },
+  sinceMs: number,
+): Promise<any | null> {
+  try {
+    const data = await bonanzaRequest(kind === 'airtime' ? '/topup/' : '/data/');
+    const rows: any[] = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
+    const phone = digitsOnly(mobileNumber).slice(-10);
+    return rows.find((r) => {
+      if (digitsOnly(r?.mobile_number).slice(-10) !== phone) return false;
+      const created = Date.parse(r?.create_date ?? '');
+      if (Number.isFinite(created) && created < sinceMs - 120_000) return false;
+      if (match.plan !== undefined) return Number(r?.plan) === Number(match.plan);
+      if (match.amount !== undefined) return Math.abs(Number(r?.amount ?? r?.plan_amount) - match.amount) < 1;
+      return true;
+    }) ?? null;
+  } catch (e) {
+    console.warn('Could not list Bonanza orders', e);
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
