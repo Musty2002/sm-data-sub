@@ -80,6 +80,7 @@ export default function Data() {
   const [purchasing, setPurchasing] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [showVerifyDialog, setShowVerifyDialog] = useState(false);
+  const [recentNumbers, setRecentNumbers] = useState<string[]>([]);
   const [lastTransaction, setLastTransaction] = useState<{
     id: string;
     date: Date;
