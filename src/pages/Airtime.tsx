@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { MobileLayout } from '@/components/layout/MobileLayout';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { PhoneInputWithContacts } from '@/components/PhoneInputWithContacts';
+import { RecentNumbers } from '@/components/RecentNumbers';
+import { getRecentNumbers, addRecentNumber } from '@/lib/recentNumbers';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -99,10 +101,9 @@ export default function Airtime() {
     fetchNetworks();
   }, []);
 
-  // Prefill last used phone number
+  // Show recently used numbers (placeholder stays empty)
   useEffect(() => {
-    const saved = localStorage.getItem('lastAirtimePhone');
-    if (saved) setPhoneNumber(saved);
+    setRecentNumbers(getRecentNumbers('recentAirtimePhones'));
   }, []);
 
   // Auto-detect network from phone number on step 2
@@ -202,7 +203,8 @@ export default function Airtime() {
         amount: purchaseAmount,
         type: 'airtime',
       });
-      try { localStorage.setItem('lastAirtimePhone', normalizedPhone); } catch {}
+      setRecentNumbers(addRecentNumber('recentAirtimePhones', normalizedPhone));
+      setPhoneNumber('');
       setShowReceipt(true);
       setAmount('');
       setSelectedNetwork(null);
