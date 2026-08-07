@@ -2,6 +2,7 @@ import { ReactNode, createContext, useContext } from 'react';
 import { useNativeFeatures } from '@/hooks/useNativeFeatures';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { useKeepAlive } from '@/hooks/useKeepAlive';
+import { useInstallReferrer } from '@/hooks/useInstallReferrer';
 
 interface NativeContextType {
   isNative: boolean;
@@ -32,6 +33,9 @@ export function NativeProvider({ children }: { children: ReactNode }) {
   
   // Keep the backend alive to prevent Cloud sleep
   useKeepAlive();
+
+  // Capture the Play Store install referrer (auto-applies referral codes)
+  useInstallReferrer();
 
   const value: NativeContextType = {
     ...nativeFeatures,
