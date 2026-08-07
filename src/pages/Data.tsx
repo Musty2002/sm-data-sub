@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { MobileLayout } from '@/components/layout/MobileLayout';
 import { ArrowLeft, Check, Loader2, ChevronRight } from 'lucide-react';
 import { PhoneInputWithContacts } from '@/components/PhoneInputWithContacts';
+import { RecentNumbers } from '@/components/RecentNumbers';
+import { getRecentNumbers, addRecentNumber } from '@/lib/recentNumbers';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -78,6 +80,7 @@ export default function Data() {
   const [purchasing, setPurchasing] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [showVerifyDialog, setShowVerifyDialog] = useState(false);
+  const [recentNumbers, setRecentNumbers] = useState<string[]>([]);
   const [lastTransaction, setLastTransaction] = useState<{
     id: string;
     date: Date;
@@ -92,10 +95,9 @@ export default function Data() {
     fetchDataBundles();
   }, []);
 
-  // Prefill last used phone number
+  // Show recently used numbers (placeholder stays empty)
   useEffect(() => {
-    const saved = localStorage.getItem('lastDataPhone');
-    if (saved) setPhoneNumber(saved);
+    setRecentNumbers(getRecentNumbers('recentDataPhones'));
   }, []);
 
   const fetchDataBundles = async () => {
@@ -224,7 +226,8 @@ export default function Data() {
         type: 'data',
         dataPlan: selectedBundle.name,
       });
-      try { localStorage.setItem('lastDataPhone', phoneNumber); } catch {}
+      setRecentNumbers(addRecentNumber('recentDataPhones', phoneNumber));
+      setPhoneNumber('');
       setShowReceipt(true);
       setSelectedBundle(null);
       setSelectedCategory(null);
@@ -493,6 +496,7 @@ export default function Data() {
                       onChange={setPhoneNumber}
                       className="mt-2"
                     />
+                    <RecentNumbers numbers={recentNumbers} onSelect={setPhoneNumber} />
                   </div>
 
                   {/* Purchase Button */}
