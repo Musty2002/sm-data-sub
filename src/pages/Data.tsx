@@ -495,6 +495,7 @@ export default function Data() {
                       onChange={setPhoneNumber}
                       className="mt-2"
                     />
+                    <RecentNumbers numbers={recentNumbers} onSelect={setPhoneNumber} />
                   </div>
 
                   {/* Purchase Button */}

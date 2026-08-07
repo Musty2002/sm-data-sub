@@ -86,6 +86,7 @@ export default function Airtime() {
   const [purchasing, setPurchasing] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [showTopUpPrompt, setShowTopUpPrompt] = useState(false);
+  const [recentNumbers, setRecentNumbers] = useState<string[]>([]);
   const [showVerifyDialog, setShowVerifyDialog] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
   const [lastTransaction, setLastTransaction] = useState<{
@@ -325,6 +326,7 @@ export default function Airtime() {
                   onChange={setPhoneNumber}
                   className="mt-2"
                 />
+                <RecentNumbers numbers={recentNumbers} onSelect={setPhoneNumber} />
               </div>
 
               {/* Amount */}
