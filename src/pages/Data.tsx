@@ -162,11 +162,20 @@ export default function Data() {
   };
 
   const initiateTransaction = () => {
-    if (!selectedNetwork || !selectedBundle || !phoneNumber) {
+    const normalized = normalizeMsisdn(phoneNumber);
+    if (!selectedNetwork || !selectedBundle || !normalized) {
       toast({
         variant: 'destructive',
         title: 'Missing Information',
         description: 'Please fill in all fields',
+      });
+      return;
+    }
+    if (normalized.length !== 11) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid Phone Number',
+        description: 'Please enter a valid 11-digit phone number.',
       });
       return;
     }
@@ -187,6 +196,8 @@ export default function Data() {
         setPurchasing(false);
         return;
       }
+      const normalizedPhone = normalizeMsisdn(phoneNumber);
+
       // Route to appropriate provider based on bundle provider
       const provider = selectedBundle.provider || 'rgc';
       const functionName = provider === 'bonanza' ? 'bonanza-services' : 'rgc-services';
@@ -199,7 +210,7 @@ export default function Data() {
         serviceType: 'data',
         plan: selectedBundle.id,
         plan_name: selectedBundle.name,
-        mobile_number: phoneNumber,
+        mobile_number: normalizedPhone,
         amount: parseFloat(selectedBundle.amount),
         network: selectedNetwork,
       };
@@ -220,13 +231,13 @@ export default function Data() {
       setLastTransaction({
         id: data.data?.reference || data.reference || `TXN-${Date.now()}`,
         date: new Date(),
-        phoneNumber,
+        phoneNumber: normalizedPhone,
         network: selectedNetwork!.toUpperCase(),
         amount: parseFloat(selectedBundle.amount),
         type: 'data',
         dataPlan: selectedBundle.name,
       });
-      setRecentNumbers(addRecentNumber('recentDataPhones', phoneNumber));
+      setRecentNumbers(addRecentNumber('recentDataPhones', normalizedPhone));
       setPhoneNumber('');
       setShowReceipt(true);
       setSelectedBundle(null);
