@@ -4,6 +4,14 @@ import { ArrowLeft, Check, Loader2, ChevronRight } from 'lucide-react';
 import { PhoneInputWithContacts } from '@/components/PhoneInputWithContacts';
 import { RecentNumbers } from '@/components/RecentNumbers';
 import { getRecentNumbers, addRecentNumber } from '@/lib/recentNumbers';
+
+// Strip spaces/dashes and normalize +234 / 234 prefixes to a local 11-digit number
+function normalizeMsisdn(raw: string): string {
+  const digits = (raw || '').replace(/\D/g, '');
+  if (digits.startsWith('234') && digits.length >= 13) return `0${digits.slice(3, 13)}`;
+  if (!digits.startsWith('0') && digits.length === 10) return `0${digits}`;
+  return digits.slice(0, 11);
+}
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
