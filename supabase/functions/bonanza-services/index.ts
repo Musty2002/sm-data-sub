@@ -111,6 +111,38 @@ async function getProviderBalance(): Promise<number | null> {
   }
 }
 
+function digitsOnly(v: unknown) {
+  return String(v ?? '').replace(/\D/g, '');
+}
+
+// Look up the actual order on the provider side, matched by phone number +
+// plan/amount within a short time window. This is race-safe: unlike comparing
+// wallet balances, a concurrent purchase by another user can't be mistaken for
+// this one.
+async function findProviderOrder(
+  kind: 'data' | 'airtime',
+  mobileNumber: string,
+  match: { plan?: number; amount?: number },
+  sinceMs: number,
+): Promise<any | null> {
+  try {
+    const data = await bonanzaRequest(kind === 'airtime' ? '/topup/' : '/data/');
+    const rows: any[] = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
+    const phone = digitsOnly(mobileNumber).slice(-10);
+    return rows.find((r) => {
+      if (digitsOnly(r?.mobile_number).slice(-10) !== phone) return false;
+      const created = Date.parse(r?.create_date ?? '');
+      if (Number.isFinite(created) && created < sinceMs - 120_000) return false;
+      if (match.plan !== undefined) return Number(r?.plan) === Number(match.plan);
+      if (match.amount !== undefined) return Math.abs(Number(r?.amount ?? r?.plan_amount) - match.amount) < 1;
+      return true;
+    }) ?? null;
+  } catch (e) {
+    console.warn('Could not list Bonanza orders', e);
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
@@ -133,6 +165,15 @@ Deno.serve(async (req) => {
     // Public: fetch balance/user info (used by admin to test connectivity)
     if (action === 'get-user') {
       const data = await bonanzaRequest('/user/');
+      return new Response(JSON.stringify({ success: true, data }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Diagnostic: list recent provider-side orders (data or topup)
+    if (action === 'list-orders') {
+      const path = body?.kind === 'airtime' ? '/topup/' : '/data/';
+      const data = await bonanzaRequest(path);
       return new Response(JSON.stringify({ success: true, data }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -210,7 +251,7 @@ Deno.serve(async (req) => {
     let amount = 0;
     let description = '';
     let result: any;
-    let balanceBefore: number | null = null;
+    let attemptStartedAt = Date.now();
 
     try {
       if (serviceType === 'data') {
@@ -227,7 +268,7 @@ Deno.serve(async (req) => {
         }
 
         const networkId = getNetworkId(body.network || body.network_name || '');
-        balanceBefore = await getProviderBalance();
+        attemptStartedAt = Date.now();
         result = await bonanzaRequest('/data/', 'POST', {
           network: networkId,
           mobile_number: body.mobile_number,
@@ -259,7 +300,7 @@ Deno.serve(async (req) => {
         }
 
         const networkId = getNetworkId(body.network);
-        balanceBefore = await getProviderBalance();
+        attemptStartedAt = Date.now();
         result = await bonanzaRequest('/topup/', 'POST', {
           network: networkId,
           amount: String(amount),
@@ -289,33 +330,47 @@ Deno.serve(async (req) => {
       console.error('Bonanza purchase error', err);
       const decision = classifyPurchaseFailure(err);
 
-      // Even for "definitive" 4xx rejections, Bonanza sometimes still processes
-      // the order and debits our provider wallet. Compare the provider balance
-      // before/after: if it dropped, the order was delivered — do NOT refund.
-      let providerDebited = false;
-      let balanceAfter: number | null = null;
-      if (decision.refund && amount > 0 && balanceBefore !== null) {
-        balanceAfter = await getProviderBalance();
-        if (balanceAfter !== null && balanceAfter < balanceBefore - 0.01) {
-          providerDebited = true;
-          decision.refund = false;
-          decision.status = 'pending';
-          decision.userMessage =
-            "We couldn't confirm your purchase with the provider, but it may still be delivered. Your transaction is saved and will be reconciled — contact support if it doesn't arrive.";
-        }
+      // Even for "definitive" 4xx rejections, Bonanza sometimes still creates
+      // and processes the order. Look up THIS order on the provider side,
+      // matched by phone number + plan/amount within this attempt's time
+      // window — a concurrent purchase by another user cannot match it.
+      let providerOrder: any = null;
+      if (amount > 0 && (serviceType === 'data' || serviceType === 'airtime')) {
+        providerOrder = await findProviderOrder(
+          serviceType,
+          String(body.mobile_number || ''),
+          serviceType === 'data' ? { plan: Number(body.plan) } : { amount },
+          attemptStartedAt,
+        );
+      }
+      const orderStatus = String(providerOrder?.Status ?? providerOrder?.status ?? '').toLowerCase();
+      const providerDelivered = orderStatus === 'successful' || orderStatus === 'success' ||
+                                orderStatus === 'processing' || orderStatus === 'pending';
+
+      if (providerDelivered) {
+        // Order exists upstream and was accepted — never refund.
+        decision.refund = false;
+        decision.status = 'pending';
+        decision.userMessage =
+          "Your order was accepted by the provider but we couldn't confirm delivery yet. It's saved and will be reconciled — contact support if it doesn't arrive.";
+      } else if (providerOrder && orderStatus === 'failed') {
+        // Provider explicitly recorded this exact order as failed → refund.
+        decision.refund = true;
+        decision.status = 'failed';
       }
 
       if (amount > 0) {
         await recordTransaction(supabase, userId, amount, serviceType, description, decision.status,
-          undefined, {
+          providerOrder?.id?.toString(), {
             error: err.message, provider: 'bonanza', unconfirmed: !decision.refund,
-            provider_debited: providerDebited,
-            provider_balance_before: balanceBefore, provider_balance_after: balanceAfter,
+            mobile_number: body.mobile_number,
+            provider_order: providerOrder ?? null,
+            provider_order_status: orderStatus || null,
           });
         if (decision.refund) {
           await refundWallet(supabase, userId, amount);
         } else {
-          console.warn(`Bonanza unconfirmed failure — wallet NOT refunded (user ${userId}, amount ${amount}, providerDebited=${providerDebited}): ${err.message}`);
+          console.warn(`Bonanza unconfirmed failure — wallet NOT refunded (user ${userId}, amount ${amount}, providerOrder=${providerOrder?.id ?? 'none'}/${orderStatus || 'n/a'}): ${err.message}`);
         }
       }
       return new Response(JSON.stringify({
