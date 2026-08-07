@@ -6,6 +6,10 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { Share } from '@capacitor/share';
+import { Capacitor } from '@capacitor/core';
+
+const PLAY_STORE_ID = 'com.sirsmarewaltd.smdatasub';
 
 interface ReferralStats {
   totalReferrals: number;
@@ -60,8 +64,27 @@ export default function Referral() {
   const shareReferralCode = async () => {
     if (!profile?.referral_code) return;
 
-    const inviteLink = `https://smdatasub.com.ng/?ref=${profile.referral_code}`;
-    const shareText = `Join SM Data Sub using my referral code: ${profile.referral_code} and get ₦100 bonus when you buy at least 1GB of data!\n\nDownload the app here: ${inviteLink}\n\nYour referral code will be applied automatically.`;
+    const code = profile.referral_code;
+    const inviteLink = `https://play.google.com/store/apps/details?id=${PLAY_STORE_ID}&referrer=${encodeURIComponent(
+      `ref=${code}`
+    )}`;
+    const shareText = `Join SM Data Sub using my referral code: ${code} and get ₦100 bonus when you buy at least 1GB of data!\n\nDownload the app here: ${inviteLink}\n\nYour referral code will be applied automatically.`;
+
+    // Native share sheet (WhatsApp, Telegram, SMS, etc.)
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await Share.share({
+          title: 'SM Data Sub Referral',
+          text: shareText,
+          url: inviteLink,
+          dialogTitle: 'Share your referral link',
+        });
+        return;
+      } catch {
+        copyReferralCode();
+        return;
+      }
+    }
 
     if (navigator.share) {
       try {
@@ -70,12 +93,13 @@ export default function Referral() {
           text: shareText,
           url: inviteLink,
         });
+        return;
       } catch {
-        copyReferralCode();
+        // fall through to copy
       }
-    } else {
-      copyReferralCode();
     }
+
+    copyReferralCode();
   };
 
   const formatCurrency = (amount: number) => {
