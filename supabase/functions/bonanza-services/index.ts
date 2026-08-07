@@ -97,6 +97,20 @@ async function refundWallet(supabase: any, userId: string, amount: number) {
   }
 }
 
+// Read the provider-side wallet balance. Used to decide whether a "failed"
+// response actually cost us money upstream (provider delivered / debited us).
+async function getProviderBalance(): Promise<number | null> {
+  try {
+    const data = await bonanzaRequest('/user/');
+    const raw = data?.user?.Account_Balance ?? data?.user?.wallet_balance ?? data?.Account_Balance;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch (e) {
+    console.warn('Could not read Bonanza balance', e);
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
@@ -196,6 +210,7 @@ Deno.serve(async (req) => {
     let amount = 0;
     let description = '';
     let result: any;
+    let balanceBefore: number | null = null;
 
     try {
       if (serviceType === 'data') {
@@ -212,6 +227,7 @@ Deno.serve(async (req) => {
         }
 
         const networkId = getNetworkId(body.network || body.network_name || '');
+        balanceBefore = await getProviderBalance();
         result = await bonanzaRequest('/data/', 'POST', {
           network: networkId,
           mobile_number: body.mobile_number,
@@ -243,6 +259,7 @@ Deno.serve(async (req) => {
         }
 
         const networkId = getNetworkId(body.network);
+        balanceBefore = await getProviderBalance();
         result = await bonanzaRequest('/topup/', 'POST', {
           network: networkId,
           amount: String(amount),
@@ -271,13 +288,34 @@ Deno.serve(async (req) => {
     } catch (err: any) {
       console.error('Bonanza purchase error', err);
       const decision = classifyPurchaseFailure(err);
+
+      // Even for "definitive" 4xx rejections, Bonanza sometimes still processes
+      // the order and debits our provider wallet. Compare the provider balance
+      // before/after: if it dropped, the order was delivered — do NOT refund.
+      let providerDebited = false;
+      let balanceAfter: number | null = null;
+      if (decision.refund && amount > 0 && balanceBefore !== null) {
+        balanceAfter = await getProviderBalance();
+        if (balanceAfter !== null && balanceAfter < balanceBefore - 0.01) {
+          providerDebited = true;
+          decision.refund = false;
+          decision.status = 'pending';
+          decision.userMessage =
+            "We couldn't confirm your purchase with the provider, but it may still be delivered. Your transaction is saved and will be reconciled — contact support if it doesn't arrive.";
+        }
+      }
+
       if (amount > 0) {
         await recordTransaction(supabase, userId, amount, serviceType, description, decision.status,
-          undefined, { error: err.message, provider: 'bonanza', unconfirmed: !decision.refund });
+          undefined, {
+            error: err.message, provider: 'bonanza', unconfirmed: !decision.refund,
+            provider_debited: providerDebited,
+            provider_balance_before: balanceBefore, provider_balance_after: balanceAfter,
+          });
         if (decision.refund) {
           await refundWallet(supabase, userId, amount);
         } else {
-          console.warn(`Bonanza ambiguous failure — wallet NOT refunded (user ${userId}, amount ${amount}): ${err.message}`);
+          console.warn(`Bonanza unconfirmed failure — wallet NOT refunded (user ${userId}, amount ${amount}, providerDebited=${providerDebited}): ${err.message}`);
         }
       }
       return new Response(JSON.stringify({
