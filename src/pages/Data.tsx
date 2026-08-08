@@ -2,6 +2,16 @@ import { useState, useEffect } from 'react';
 import { MobileLayout } from '@/components/layout/MobileLayout';
 import { ArrowLeft, Check, Loader2, ChevronRight } from 'lucide-react';
 import { PhoneInputWithContacts } from '@/components/PhoneInputWithContacts';
+import { RecentNumbers } from '@/components/RecentNumbers';
+import { getRecentNumbers, addRecentNumber } from '@/lib/recentNumbers';
+
+// Strip spaces/dashes and normalize +234 / 234 prefixes to a local 11-digit number
+function normalizeMsisdn(raw: string): string {
+  const digits = (raw || '').replace(/\D/g, '');
+  if (digits.startsWith('234') && digits.length >= 13) return `0${digits.slice(3, 13)}`;
+  if (!digits.startsWith('0') && digits.length === 10) return `0${digits}`;
+  return digits.slice(0, 11);
+}
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -78,6 +88,7 @@ export default function Data() {
   const [purchasing, setPurchasing] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [showVerifyDialog, setShowVerifyDialog] = useState(false);
+  const [recentNumbers, setRecentNumbers] = useState<string[]>([]);
   const [lastTransaction, setLastTransaction] = useState<{
     id: string;
     date: Date;
@@ -92,10 +103,9 @@ export default function Data() {
     fetchDataBundles();
   }, []);
 
-  // Prefill last used phone number
+  // Show recently used numbers (placeholder stays empty)
   useEffect(() => {
-    const saved = localStorage.getItem('lastDataPhone');
-    if (saved) setPhoneNumber(saved);
+    setRecentNumbers(getRecentNumbers('recentDataPhones'));
   }, []);
 
   const fetchDataBundles = async () => {
@@ -160,11 +170,20 @@ export default function Data() {
   };
 
   const initiateTransaction = () => {
-    if (!selectedNetwork || !selectedBundle || !phoneNumber) {
+    const normalized = normalizeMsisdn(phoneNumber);
+    if (!selectedNetwork || !selectedBundle || !normalized) {
       toast({
         variant: 'destructive',
         title: 'Missing Information',
         description: 'Please fill in all fields',
+      });
+      return;
+    }
+    if (normalized.length !== 11) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid Phone Number',
+        description: 'Please enter a valid 11-digit phone number.',
       });
       return;
     }
@@ -185,6 +204,8 @@ export default function Data() {
         setPurchasing(false);
         return;
       }
+      const normalizedPhone = normalizeMsisdn(phoneNumber);
+
       // Route to appropriate provider based on bundle provider
       const provider = selectedBundle.provider || 'rgc';
       const functionName = provider === 'bonanza' ? 'bonanza-services' : 'rgc-services';
@@ -197,7 +218,7 @@ export default function Data() {
         serviceType: 'data',
         plan: selectedBundle.id,
         plan_name: selectedBundle.name,
-        mobile_number: phoneNumber,
+        mobile_number: normalizedPhone,
         amount: parseFloat(selectedBundle.amount),
         network: selectedNetwork,
       };
@@ -218,13 +239,14 @@ export default function Data() {
       setLastTransaction({
         id: data.data?.reference || data.reference || `TXN-${Date.now()}`,
         date: new Date(),
-        phoneNumber,
+        phoneNumber: normalizedPhone,
         network: selectedNetwork!.toUpperCase(),
         amount: parseFloat(selectedBundle.amount),
         type: 'data',
         dataPlan: selectedBundle.name,
       });
-      try { localStorage.setItem('lastDataPhone', phoneNumber); } catch {}
+      setRecentNumbers(addRecentNumber('recentDataPhones', normalizedPhone));
+      setPhoneNumber('');
       setShowReceipt(true);
       setSelectedBundle(null);
       setSelectedCategory(null);
@@ -493,6 +515,7 @@ export default function Data() {
                       onChange={setPhoneNumber}
                       className="mt-2"
                     />
+                    <RecentNumbers numbers={recentNumbers} onSelect={setPhoneNumber} />
                   </div>
 
                   {/* Purchase Button */}
