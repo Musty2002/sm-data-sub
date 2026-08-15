@@ -517,6 +517,7 @@ export type Database = {
           id: string
           metadata: Json | null
           reference: string | null
+          request_id: string | null
           status: Database["public"]["Enums"]["transaction_status"]
           type: Database["public"]["Enums"]["transaction_type"]
           user_id: string
@@ -529,6 +530,7 @@ export type Database = {
           id?: string
           metadata?: Json | null
           reference?: string | null
+          request_id?: string | null
           status?: Database["public"]["Enums"]["transaction_status"]
           type: Database["public"]["Enums"]["transaction_type"]
           user_id: string
@@ -541,6 +543,7 @@ export type Database = {
           id?: string
           metadata?: Json | null
           reference?: string | null
+          request_id?: string | null
           status?: Database["public"]["Enums"]["transaction_status"]
           type?: Database["public"]["Enums"]["transaction_type"]
           user_id?: string
@@ -594,7 +597,26 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      begin_purchase: {
+        Args: {
+          p_amount: number
+          p_category: Database["public"]["Enums"]["transaction_category"]
+          p_description: string
+          p_metadata?: Json
+          p_request_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
       block_all_web_users: { Args: never; Returns: undefined }
+      complete_purchase: {
+        Args: {
+          p_metadata?: Json
+          p_reference?: string
+          p_transaction_id: string
+        }
+        Returns: boolean
+      }
       deduct_wallet_balance: {
         Args: { _amount: number; _user_id: string }
         Returns: boolean
@@ -609,6 +631,10 @@ export type Database = {
         Returns: boolean
       }
       is_user_blocked: { Args: { _user_id: string }; Returns: boolean }
+      mark_purchase_pending: {
+        Args: { p_metadata?: Json; p_transaction_id: string }
+        Returns: boolean
+      }
       process_aspfiy_deposit: {
         Args: {
           p_amount: number
@@ -618,6 +644,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: number
+      }
+      refund_purchase: {
+        Args: { p_metadata?: Json; p_reason: string; p_transaction_id: string }
+        Returns: boolean
       }
     }
     Enums: {
