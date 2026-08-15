@@ -354,6 +354,11 @@ Deno.serve(async (req) => {
     } catch (err: any) {
       console.error('Bonanza purchase error', err);
       const decision = classifyPurchaseFailure(err);
+      if (String(err?.message || '').startsWith('PURCHASE_RECORD_UNCONFIRMED:')) {
+        decision.refund = false;
+        decision.status = 'pending';
+        decision.userMessage = 'The provider accepted your request and confirmation is pending. Please check transaction history shortly.';
+      }
 
       // Even for "definitive" 4xx rejections, Bonanza sometimes still creates
       // and processes the order. Look up THIS order on the provider side,

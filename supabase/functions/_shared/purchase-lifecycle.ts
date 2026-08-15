@@ -48,7 +48,9 @@ export async function completePurchase(
     p_reference: reference ?? null,
     p_metadata: metadata,
   });
-  if (error || data !== true) throw new Error(error?.message || 'Unable to complete purchase record');
+  if (error || data !== true) {
+    throw new Error(`PURCHASE_RECORD_UNCONFIRMED: ${error?.message || 'Unable to complete purchase record'}`);
+  }
 }
 
 export async function markPurchasePending(

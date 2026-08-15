@@ -780,6 +780,11 @@ Deno.serve(async (req) => {
         console.error('Purchase failed:', purchaseError);
 
         const decision = classifyPurchaseFailure(purchaseError);
+        if (String(purchaseError?.message || '').startsWith('PURCHASE_RECORD_UNCONFIRMED:')) {
+          decision.refund = false;
+          decision.status = 'pending';
+          decision.userMessage = 'The provider accepted your request and confirmation is pending. Please check transaction history shortly.';
+        }
         const category = serviceType === 'cable' ? 'tv' : serviceType;
 
         if (serviceType === 'data' && purchaseTransactionId) {
