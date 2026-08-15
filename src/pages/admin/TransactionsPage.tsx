@@ -149,42 +149,11 @@ export default function TransactionsPage() {
 
     setRefunding(true);
     try {
-      // Get user's current wallet balance
-      const { data: wallet, error: walletError } = await supabase
-        .from('wallets')
-        .select('balance')
-        .eq('user_id', selectedTransaction.user_id)
-        .single();
-
-      if (walletError) throw walletError;
-
-      const newBalance = Number(wallet.balance) + Number(selectedTransaction.amount);
-
-      // Update wallet balance
-      const { error: updateError } = await supabase
-        .from('wallets')
-        .update({ balance: newBalance })
-        .eq('user_id', selectedTransaction.user_id);
-
-      if (updateError) throw updateError;
-
-      // Create refund transaction
-      const { error: txnError } = await supabase
-        .from('transactions')
-        .insert({
-          user_id: selectedTransaction.user_id,
-          type: 'credit',
-          category: 'deposit' as const,
-          amount: selectedTransaction.amount,
-          status: 'completed' as const,
-          description: `Refund for failed ${selectedTransaction.category} - ${selectedTransaction.reference || selectedTransaction.id.slice(0, 8)}`,
-          reference: `REF-${Date.now()}`
-        });
-
-      if (txnError) throw txnError;
-
-      // Update original transaction status to show it's been refunded
-      // Note: We can't update status directly due to RLS, but we log the refund
+      const { data, error } = await supabase.functions.invoke('admin-refund-purchase', {
+        body: { transactionId: selectedTransaction.id },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.message || 'Refund was not processed');
 
       toast.success(`Refund of ₦${Number(selectedTransaction.amount).toLocaleString()} processed successfully`);
       setRefundDialogOpen(false);

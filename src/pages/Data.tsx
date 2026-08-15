@@ -214,6 +214,7 @@ export default function Data() {
 
       // Build request body based on provider
       const requestBody: any = {
+        request_id: crypto.randomUUID(),
         action: 'purchase',
         serviceType: 'data',
         plan: selectedBundle.id,
@@ -233,6 +234,18 @@ export default function Data() {
       }
 
       if (!data?.success) {
+        if (data?.unconfirmed) {
+          toast({
+            title: 'Delivery Pending',
+            description: data?.message || 'Your payment was received and delivery is being confirmed. Check transaction history for updates.',
+          });
+          setPhoneNumber('');
+          setSelectedBundle(null);
+          setSelectedCategory(null);
+          setSelectedNetwork(null);
+          setStep('network');
+          return;
+        }
         throw new Error(data?.message || 'Purchase failed');
       }
 
