@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { validateUserAccount } from '../_shared/validate-account.ts';
 import { checkRateLimit } from '../_shared/rate-limit.ts';
 import { AmbiguousProviderError, classifyPurchaseFailure } from '../_shared/purchase-safety.ts';
+import { beginPurchase, completePurchase, markPurchasePending, refundPurchase, resolveRequestId } from '../_shared/purchase-lifecycle.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -252,6 +253,7 @@ Deno.serve(async (req) => {
     let description = '';
     let result: any;
     let attemptStartedAt = Date.now();
+    let purchaseTransactionId: string | null = null;
 
     try {
       if (serviceType === 'data') {
@@ -261,10 +263,30 @@ Deno.serve(async (req) => {
         amount = Number(body.amount);
         description = `Data purchase - ${body.mobile_number}`;
 
-        if (!(await deductFromWallet(supabase, userId, amount))) {
-          return new Response(JSON.stringify({ success: false, message: 'Insufficient balance' }), {
-            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
+        const requestId = resolveRequestId(body.request_id);
+        const purchase = await beginPurchase(supabase, {
+          userId,
+          requestId,
+          amount,
+          category: 'data',
+          description,
+          metadata: {
+            request_id: requestId,
+            mobile_number: body.mobile_number,
+            plan: body.plan,
+            plan_name: body.plan_name,
+            provider: 'bonanza',
+          },
+        });
+        purchaseTransactionId = purchase.transactionId;
+        if (purchase.duplicate) {
+          const unconfirmed = purchase.status === 'pending';
+          return new Response(JSON.stringify({
+            success: purchase.status === 'completed',
+            unconfirmed,
+            transaction_id: purchase.transactionId,
+            message: unconfirmed ? 'This purchase is already pending confirmation.' : `This purchase was already ${purchase.status}.`,
+          }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
         const networkId = getNetworkId(body.network || body.network_name || '');
@@ -281,10 +303,13 @@ Deno.serve(async (req) => {
                         result?.Status === 'success' || result?.success === true;
         const status = success ? 'completed' : 'pending';
 
-        await recordTransaction(supabase, userId, amount, 'data', description, status,
-          result?.id?.toString() || result?.reference,
-          { mobile_number: body.mobile_number, plan: body.plan, plan_name: body.plan_name,
-            provider: 'bonanza', api_response: result });
+        const resultMetadata = { mobile_number: body.mobile_number, plan: body.plan, plan_name: body.plan_name,
+          provider: 'bonanza', api_response: result };
+        if (status === 'completed') {
+          await completePurchase(supabase, purchaseTransactionId, result?.id?.toString() || result?.reference, resultMetadata);
+        } else {
+          await markPurchasePending(supabase, purchaseTransactionId, resultMetadata);
+        }
 
       } else if (serviceType === 'airtime') {
         if (!body.amount || !body.mobile_number || !body.network) {
@@ -329,6 +354,11 @@ Deno.serve(async (req) => {
     } catch (err: any) {
       console.error('Bonanza purchase error', err);
       const decision = classifyPurchaseFailure(err);
+      if (String(err?.message || '').startsWith('PURCHASE_RECORD_UNCONFIRMED:')) {
+        decision.refund = false;
+        decision.status = 'pending';
+        decision.userMessage = 'The provider accepted your request and confirmation is pending. Please check transaction history shortly.';
+      }
 
       // Even for "definitive" 4xx rejections, Bonanza sometimes still creates
       // and processes the order. Look up THIS order on the provider side,
@@ -360,23 +390,29 @@ Deno.serve(async (req) => {
       }
 
       if (amount > 0) {
-        await recordTransaction(supabase, userId, amount, serviceType, description, decision.status,
-          providerOrder?.id?.toString(), {
+        const failureMetadata = {
             error: err.message, provider: 'bonanza', unconfirmed: !decision.refund,
             mobile_number: body.mobile_number,
             provider_order: providerOrder ?? null,
             provider_order_status: orderStatus || null,
-          });
-        if (decision.refund) {
-          await refundWallet(supabase, userId, amount);
+          };
+        if (serviceType === 'data' && purchaseTransactionId) {
+          if (decision.refund) {
+            await refundPurchase(supabase, purchaseTransactionId, err.message, failureMetadata);
+          } else {
+            await markPurchasePending(supabase, purchaseTransactionId, failureMetadata);
+          }
         } else {
-          console.warn(`Bonanza unconfirmed failure — wallet NOT refunded (user ${userId}, amount ${amount}, providerOrder=${providerOrder?.id ?? 'none'}/${orderStatus || 'n/a'}): ${err.message}`);
+          await recordTransaction(supabase, userId, amount, serviceType, description, decision.status,
+            providerOrder?.id?.toString(), failureMetadata);
+          if (decision.refund) await refundWallet(supabase, userId, amount);
         }
+        if (!decision.refund) console.warn(`Bonanza unconfirmed failure — wallet NOT refunded (user ${userId}, amount ${amount}, providerOrder=${providerOrder?.id ?? 'none'}/${orderStatus || 'n/a'}): ${err.message}`);
       }
       return new Response(JSON.stringify({
         success: false, message: decision.userMessage, unconfirmed: !decision.refund,
       }), {
-        status: decision.refund ? 400 : 202,
+        status: decision.refund ? 400 : 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
