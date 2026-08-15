@@ -728,24 +728,21 @@ Deno.serve(async (req) => {
           const transactionStatus = isSuccessful ? 'completed' : 'pending';
           console.log(`iSquare airtime transaction status determined: ${transactionStatus} (API status: ${result.status})`);
           
-          await recordTransaction(
-            supabase, 
-            userId, 
-            amount, 
-            'airtime', 
-            description, 
-            transactionStatus,
-            result.reference || reference, 
-            { 
-              mobile_number: phoneNumber, 
-              network: body.network,
-              provider: 'isquare',
-              api_response: result // Store full API response for accurate status detection
-            }
-          );
+          const airtimeMetadata = {
+            mobile_number: phoneNumber,
+            network: body.network,
+            provider: 'isquare',
+            api_response: result,
+          };
+          if (transactionStatus === 'completed') {
+            await completePurchase(supabase, purchaseTransactionId, result.reference || reference, airtimeMetadata);
+          } else {
+            await markPurchasePending(supabase, purchaseTransactionId, airtimeMetadata);
+          }
 
           return new Response(JSON.stringify({ 
-            success: true, 
+            success: true,
+            unconfirmed: transactionStatus !== 'completed',
             data: result,
             reference: result.reference || reference 
           }), {
@@ -759,39 +756,31 @@ Deno.serve(async (req) => {
         console.error('Purchase failed:', purchaseError);
 
         const decision = classifyPurchaseFailure(purchaseError);
+        if (String(purchaseError?.message || '').startsWith('PURCHASE_RECORD_UNCONFIRMED:')) {
+          decision.refund = false;
+          decision.status = 'pending';
+          decision.userMessage = 'The provider accepted your request and confirmation is pending. Please check transaction history shortly.';
+        }
 
-        await recordTransaction(
-          supabase,
-          userId,
-          amount,
-          serviceType,
-          description,
-          decision.status,
-          undefined,
-          {
-            error: purchaseError.message,
-            provider: 'isquare',
-            unconfirmed: !decision.refund,
-          },
-        );
+        const failureMetadata = {
+          error: purchaseError.message,
+          provider: 'isquare',
+          unconfirmed: !decision.refund,
+        };
 
-        if (decision.refund && amount > 0) {
-          const { data: wallet } = await supabase
-            .from('wallets')
-            .select('balance')
-            .eq('user_id', userId)
-            .single();
-
-          if (wallet) {
-            await supabase
-              .from('wallets')
-              .update({ balance: Number(wallet.balance) + Number(amount), updated_at: new Date().toISOString() })
-              .eq('user_id', userId);
+        if (purchaseTransactionId) {
+          // Atomic: refund only when the failure is confirmed, otherwise keep pending.
+          if (decision.refund) {
+            await refundPurchase(supabase, purchaseTransactionId, purchaseError.message, failureMetadata);
+          } else {
+            await markPurchasePending(supabase, purchaseTransactionId, failureMetadata);
+            console.warn(
+              `iSquare ambiguous failure — wallet NOT refunded (user ${userId}, amount ${amount}): ${purchaseError.message}`,
+            );
           }
-        } else {
-          console.warn(
-            `iSquare ambiguous failure — wallet NOT refunded (user ${userId}, amount ${amount}): ${purchaseError.message}`,
-          );
+        } else if (amount > 0) {
+          // Failure before any debit happened — just log a failed attempt.
+          await recordTransaction(supabase, userId, amount, serviceType, description, 'failed', undefined, failureMetadata);
         }
 
         return new Response(JSON.stringify({
