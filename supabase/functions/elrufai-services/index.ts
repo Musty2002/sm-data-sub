@@ -1,6 +1,14 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { validateUserAccount } from '../_shared/validate-account.ts';
 import { checkRateLimit } from '../_shared/rate-limit.ts';
+import { classifyPurchaseFailure } from '../_shared/purchase-safety.ts';
+import {
+  beginPurchase,
+  completePurchase,
+  markPurchasePending,
+  refundPurchase,
+  resolveRequestId,
+} from '../_shared/purchase-lifecycle.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -451,62 +459,80 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Deduct from wallet first
-      const deducted = await deductFromWallet(supabase, userId, amount);
-      if (!deducted) {
-        return new Response(JSON.stringify({ success: false, message: 'Insufficient balance' }), {
+      if (serviceType !== 'data' && serviceType !== 'airtime') {
+        return new Response(JSON.stringify({ success: false, message: 'Invalid service type' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      if (!body.network || !body.mobile_number || (serviceType === 'data' && !body.plan)) {
+        return new Response(JSON.stringify({ success: false, message: 'Missing required fields' }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
+      const description = `${serviceType === 'data' ? 'Data' : 'Airtime'} purchase - ${body.mobile_number}`;
+
+      // Atomic: debit wallet + create pending transaction in one step
+      const requestId = resolveRequestId((body as any).request_id);
+      let purchaseTransactionId: string | null = null;
+      try {
+        const purchase = await beginPurchase(supabase, {
+          userId,
+          requestId,
+          amount,
+          category: serviceType,
+          description,
+          metadata: {
+            request_id: requestId,
+            mobile_number: body.mobile_number,
+            plan: body.plan,
+            plan_name: body.plan_name,
+            network: body.network,
+            provider: 'elrufai',
+          },
+        });
+        purchaseTransactionId = purchase.transactionId;
+        if (purchase.duplicate) {
+          const unconfirmed = purchase.status === 'pending';
+          return new Response(JSON.stringify({
+            success: purchase.status === 'completed',
+            unconfirmed,
+            transaction_id: purchase.transactionId,
+            message: unconfirmed ? 'This purchase is already pending confirmation.' : `This purchase was already ${purchase.status}.`,
+          }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+      } catch (e: any) {
+        const insufficient = String(e?.message || '').includes('Insufficient balance');
+        return new Response(JSON.stringify({
+          success: false,
+          message: insufficient ? 'Insufficient balance' : (e?.message || 'Unable to start purchase'),
+        }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
       try {
         let result;
-        let description = '';
-        
         if (serviceType === 'data') {
-          if (!body.network || !body.plan || !body.mobile_number) {
-            await refundWallet(supabase, userId, amount);
-            return new Response(JSON.stringify({ success: false, message: 'Missing required fields' }), {
-              status: 400,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-          }
-
-          description = `Data purchase - ${body.mobile_number}`;
           result = await purchaseData(body.network, body.mobile_number, body.plan, body.ported_number ?? true);
-
-        } else if (serviceType === 'airtime') {
-          if (!body.network || !body.amount || !body.mobile_number) {
-            await refundWallet(supabase, userId, amount);
-            return new Response(JSON.stringify({ success: false, message: 'Missing required fields' }), {
-              status: 400,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-          }
-
-          description = `Airtime purchase - ${body.mobile_number}`;
-          result = await purchaseAirtime(body.network, body.amount, body.mobile_number, body.ported_number ?? true, body.airtime_type || 'VTU');
-
         } else {
-          await refundWallet(supabase, userId, amount);
-          return new Response(JSON.stringify({ success: false, message: 'Invalid service type' }), {
-            status: 400,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
+          result = await purchaseAirtime(body.network, body.amount, body.mobile_number, body.ported_number ?? true, body.airtime_type || 'VTU');
         }
 
         // Check if purchase was successful
         const isSuccess = result.ok && (result.data?.status === 'success' || result.data?.Status === 'successful' || result.status === 200);
+        const explicitFailure = result.ok === false && result.status >= 400 && result.status < 500;
+        const resultMetadata = {
+          mobile_number: body.mobile_number,
+          plan: body.plan,
+          plan_name: body.plan_name,
+          network: body.network,
+          provider: 'elrufai',
+          api_response: result.data,
+        };
 
         if (isSuccess) {
-          await recordTransaction(supabase, userId, amount, serviceType, description, 'completed', result.data?.id?.toString(), {
-            mobile_number: body.mobile_number,
-            plan: body.plan,
-            plan_name: body.plan_name,
-            provider: 'elrufai',
-            api_response: result.data
-          });
+          await completePurchase(supabase, purchaseTransactionId!, result.data?.id?.toString(), resultMetadata);
 
           // Add cashback for data purchases
           if (serviceType === 'data' && body.plan_name) {
@@ -534,15 +560,14 @@ Deno.serve(async (req) => {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
 
-        } else {
-          // Purchase failed - refund wallet
-          await refundWallet(supabase, userId, amount);
-          await recordTransaction(supabase, userId, amount, serviceType, description, 'failed', undefined, {
-            mobile_number: body.mobile_number,
-            plan: body.plan,
-            provider: 'elrufai',
-            error: result.data?.message || result.data?.error || 'Purchase failed'
-          });
+        } else if (explicitFailure) {
+          // Provider explicitly rejected the request → safe to refund atomically.
+          await refundPurchase(
+            supabase,
+            purchaseTransactionId!,
+            result.data?.message || result.data?.error || 'Purchase rejected by provider',
+            resultMetadata,
+          );
 
           return new Response(JSON.stringify({
             success: false,
@@ -551,19 +576,45 @@ Deno.serve(async (req) => {
             status: 400,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
+        } else {
+          // Ambiguous provider response — keep pending, never auto-refund.
+          await markPurchasePending(supabase, purchaseTransactionId!, resultMetadata);
+
+          return new Response(JSON.stringify({
+            success: false,
+            unconfirmed: true,
+            message: "Your order was sent but we couldn't confirm delivery yet. It's saved and will be reconciled — check your transaction history shortly."
+          }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
         }
 
       } catch (error: any) {
-        // Refund on error
-        await refundWallet(supabase, userId, amount);
-        await recordTransaction(supabase, userId, amount, serviceType, `${serviceType} purchase - ${body.mobile_number}`, 'failed', undefined, {
-          error: error.message,
-          provider: 'elrufai'
-        });
-
         console.error('Elrufai purchase error:', error);
-        return new Response(JSON.stringify({ success: false, message: error.message }), {
-          status: 500,
+        const decision = classifyPurchaseFailure(error);
+        if (String(error?.message || '').startsWith('PURCHASE_RECORD_UNCONFIRMED:')) {
+          decision.refund = false;
+          decision.status = 'pending';
+          decision.userMessage = 'The provider accepted your request and confirmation is pending. Please check transaction history shortly.';
+        }
+        const failureMetadata = { error: error.message, provider: 'elrufai', unconfirmed: !decision.refund };
+
+        if (purchaseTransactionId) {
+          if (decision.refund) {
+            await refundPurchase(supabase, purchaseTransactionId, error.message, failureMetadata);
+          } else {
+            await markPurchasePending(supabase, purchaseTransactionId, failureMetadata);
+            console.warn(`Elrufai ambiguous failure — wallet NOT refunded (user ${userId}, amount ${amount}): ${error.message}`);
+          }
+        }
+
+        return new Response(JSON.stringify({
+          success: false,
+          message: decision.userMessage,
+          unconfirmed: !decision.refund,
+        }), {
+          status: decision.refund ? 400 : 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
