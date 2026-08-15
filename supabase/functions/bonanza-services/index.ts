@@ -318,10 +318,29 @@ Deno.serve(async (req) => {
         amount = Number(body.amount);
         description = `Airtime purchase - ${body.mobile_number}`;
 
-        if (!(await deductFromWallet(supabase, userId, amount))) {
-          return new Response(JSON.stringify({ success: false, message: 'Insufficient balance' }), {
-            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
+        const airtimeRequestId = resolveRequestId(body.request_id);
+        const airtimePurchase = await beginPurchase(supabase, {
+          userId,
+          requestId: airtimeRequestId,
+          amount,
+          category: 'airtime',
+          description,
+          metadata: {
+            request_id: airtimeRequestId,
+            mobile_number: body.mobile_number,
+            network: body.network,
+            provider: 'bonanza',
+          },
+        });
+        purchaseTransactionId = airtimePurchase.transactionId;
+        if (airtimePurchase.duplicate) {
+          const unconfirmed = airtimePurchase.status === 'pending';
+          return new Response(JSON.stringify({
+            success: airtimePurchase.status === 'completed',
+            unconfirmed,
+            transaction_id: airtimePurchase.transactionId,
+            message: unconfirmed ? 'This purchase is already pending confirmation.' : `This purchase was already ${airtimePurchase.status}.`,
+          }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
         const networkId = getNetworkId(body.network);
@@ -339,10 +358,15 @@ Deno.serve(async (req) => {
                         result?.success === true;
         const status = success ? 'completed' : 'pending';
 
-        await recordTransaction(supabase, userId, amount, 'airtime', description, status,
-          result?.id?.toString() || result?.reference,
-          { mobile_number: body.mobile_number, network: body.network,
-            provider: 'bonanza', api_response: result });
+        const airtimeMetadata = {
+          mobile_number: body.mobile_number, network: body.network,
+          provider: 'bonanza', api_response: result,
+        };
+        if (status === 'completed') {
+          await completePurchase(supabase, purchaseTransactionId, result?.id?.toString() || result?.reference, airtimeMetadata);
+        } else {
+          await markPurchasePending(supabase, purchaseTransactionId, airtimeMetadata);
+        }
 
       } else {
         throw new Error('Unsupported service type');
@@ -396,7 +420,7 @@ Deno.serve(async (req) => {
             provider_order: providerOrder ?? null,
             provider_order_status: orderStatus || null,
           };
-        if (serviceType === 'data' && purchaseTransactionId) {
+        if (purchaseTransactionId) {
           if (decision.refund) {
             await refundPurchase(supabase, purchaseTransactionId, err.message, failureMetadata);
           } else {

@@ -187,6 +187,7 @@ export default function Airtime() {
           network: selectedNetwork.category,
           amount: purchaseAmount,
           mobile_number: normalizedPhone,
+          request_id: crypto.randomUUID(),
         },
       });
       let message: string | undefined;
