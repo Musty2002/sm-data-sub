@@ -35,6 +35,22 @@ Deno.serve(async (req) => {
       });
     }
 
+    const { data: transaction, error: transactionError } = await supabase
+      .from('transactions')
+      .select('request_id, metadata')
+      .eq('id', transactionId)
+      .single();
+    if (transactionError || !transaction) throw new Error('Transaction not found');
+    if (!transaction.request_id) {
+      return new Response(JSON.stringify({
+        success: false,
+        message: 'This legacy transaction requires manual review to prevent a duplicate refund.',
+      }), {
+        status: 409,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const { data, error } = await supabase.rpc('refund_purchase', {
       p_transaction_id: transactionId,
       p_reason: 'Manual admin refund',
