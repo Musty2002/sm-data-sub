@@ -420,7 +420,7 @@ Deno.serve(async (req) => {
             provider_order: providerOrder ?? null,
             provider_order_status: orderStatus || null,
           };
-        if (serviceType === 'data' && purchaseTransactionId) {
+        if (purchaseTransactionId) {
           if (decision.refund) {
             await refundPurchase(supabase, purchaseTransactionId, err.message, failureMetadata);
           } else {
