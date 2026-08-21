@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { MobileLayout } from '@/components/layout/MobileLayout';
 import { ArrowLeft, Check, Loader2, ChevronRight } from 'lucide-react';
 import { PhoneInputWithContacts } from '@/components/PhoneInputWithContacts';
@@ -88,6 +88,8 @@ export default function Data() {
   const [purchasing, setPurchasing] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [showVerifyDialog, setShowVerifyDialog] = useState(false);
+  const purchaseIntentRef = useRef<{ key: string; requestId: string } | null>(null);
+  const purchaseInFlightRef = useRef(false);
   const [recentNumbers, setRecentNumbers] = useState<string[]>([]);
   const [lastTransaction, setLastTransaction] = useState<{
     id: string;
@@ -192,6 +194,8 @@ export default function Data() {
   };
 
   const handlePurchase = async () => {
+    if (purchaseInFlightRef.current) return;
+    purchaseInFlightRef.current = true;
     setShowVerifyDialog(false);
     setPurchasing(true);
     try {
@@ -202,6 +206,7 @@ export default function Data() {
           description: 'Please select a data plan first.',
         });
         setPurchasing(false);
+        purchaseInFlightRef.current = false;
         return;
       }
       const normalizedPhone = normalizeMsisdn(phoneNumber);
@@ -209,12 +214,17 @@ export default function Data() {
       // Route to appropriate provider based on bundle provider
       const provider = selectedBundle.provider || 'rgc';
       const functionName = provider === 'bonanza' ? 'bonanza-services' : 'rgc-services';
+      const intentKey = `${provider}|${selectedBundle.id}|${normalizedPhone}|${selectedBundle.amount}`;
+      if (!purchaseIntentRef.current || purchaseIntentRef.current.key !== intentKey) {
+        purchaseIntentRef.current = { key: intentKey, requestId: crypto.randomUUID() };
+      }
+      const requestId = purchaseIntentRef.current.requestId;
 
       console.log(`Purchasing via ${provider} provider`);
 
       // Build request body based on provider
       const requestBody: any = {
-        request_id: crypto.randomUUID(),
+        request_id: requestId,
         action: 'purchase',
         serviceType: 'data',
         plan: selectedBundle.id,
@@ -246,6 +256,7 @@ export default function Data() {
           setStep('network');
           return;
         }
+        purchaseIntentRef.current = null;
         throw new Error(data?.message || 'Purchase failed');
       }
 
@@ -264,12 +275,16 @@ export default function Data() {
       setSelectedBundle(null);
       setSelectedCategory(null);
       setSelectedNetwork(null);
+      purchaseIntentRef.current = null;
       setStep('network');
     } catch (error: any) {
       console.error('Purchase error:', error);
 
       let title = 'Purchase Failed';
       let description = error.message || 'Unable to complete purchase. Please try again.';
+      const errorText = String(error.message || '').toLowerCase();
+      const shouldPreserveRequest = errorText.includes('pending') || errorText.includes('confirm') || errorText.includes('accepted');
+      if (!shouldPreserveRequest) purchaseIntentRef.current = null;
 
       if (error.message === 'Insufficient balance') {
         title = 'Insufficient Balance';
@@ -283,6 +298,7 @@ export default function Data() {
       });
     } finally {
       setPurchasing(false);
+      purchaseInFlightRef.current = false;
     }
   };
 
