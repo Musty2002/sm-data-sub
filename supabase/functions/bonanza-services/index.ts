@@ -427,9 +427,11 @@ Deno.serve(async (req) => {
             await markPurchasePending(supabase, purchaseTransactionId, failureMetadata);
           }
         } else {
+          // beginPurchase failed before any wallet debit (for example,
+          // insufficient balance). Record the attempt for audit only. Never
+          // refund here: doing so would credit money that was never deducted.
           await recordTransaction(supabase, userId, amount, serviceType, description, decision.status,
             providerOrder?.id?.toString(), failureMetadata);
-          if (decision.refund) await refundWallet(supabase, userId, amount);
         }
         if (!decision.refund) console.warn(`Bonanza unconfirmed failure — wallet NOT refunded (user ${userId}, amount ${amount}, providerOrder=${providerOrder?.id ?? 'none'}/${orderStatus || 'n/a'}): ${err.message}`);
       }
