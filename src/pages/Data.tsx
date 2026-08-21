@@ -198,6 +198,7 @@ export default function Data() {
     purchaseInFlightRef.current = true;
     setShowVerifyDialog(false);
     setPurchasing(true);
+    let preserveRequestId = false;
     try {
       if (!selectedBundle || !selectedNetwork) {
         toast({
@@ -239,6 +240,9 @@ export default function Data() {
       });
 
       if (error) {
+        // A transport error is ambiguous: the backend/provider may already
+        // have accepted this exact request, so retries must reuse its ID.
+        preserveRequestId = true;
         const message = await getEdgeFunctionErrorMessage(error);
         throw new Error(message || 'Purchase failed');
       }
@@ -283,7 +287,7 @@ export default function Data() {
       let title = 'Purchase Failed';
       let description = error.message || 'Unable to complete purchase. Please try again.';
       const errorText = String(error.message || '').toLowerCase();
-      const shouldPreserveRequest = errorText.includes('pending') || errorText.includes('confirm') || errorText.includes('accepted');
+      const shouldPreserveRequest = preserveRequestId || errorText.includes('pending') || errorText.includes('confirm') || errorText.includes('accepted');
       if (!shouldPreserveRequest) purchaseIntentRef.current = null;
 
       if (error.message === 'Insufficient balance') {

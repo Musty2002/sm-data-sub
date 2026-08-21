@@ -205,7 +205,7 @@ export default function Airtime() {
       if (error) message = await getEdgeFunctionErrorMessage(error);
       const primaryFailed = !!error || !data?.success;
       if (primaryFailed) {
-        preserveRequestId = data?.unconfirmed === true;
+        preserveRequestId = !!error || data?.unconfirmed === true;
         throw new Error(message || data?.message || 'Purchase failed');
       }
 
