@@ -81,23 +81,6 @@ async function recordTransaction(
   if (error) console.error('record tx err', error);
 }
 
-async function deductFromWallet(supabase: any, userId: string, amount: number) {
-  const { data, error } = await supabase.rpc('deduct_wallet_balance', {
-    _user_id: userId, _amount: amount,
-  });
-  if (error) { console.error(error); return false; }
-  return data === true;
-}
-
-async function refundWallet(supabase: any, userId: string, amount: number) {
-  const { data: w } = await supabase.from('wallets').select('balance').eq('user_id', userId).single();
-  if (w) {
-    await supabase.from('wallets').update({
-      balance: Number(w.balance) + Number(amount), updated_at: new Date().toISOString(),
-    }).eq('user_id', userId);
-  }
-}
-
 // Read the provider-side wallet balance. Used to decide whether a "failed"
 // response actually cost us money upstream (provider delivered / debited us).
 async function getProviderBalance(): Promise<number | null> {
@@ -389,7 +372,9 @@ Deno.serve(async (req) => {
       // matched by phone number + plan/amount within this attempt's time
       // window — a concurrent purchase by another user cannot match it.
       let providerOrder: any = null;
-      if (amount > 0 && (serviceType === 'data' || serviceType === 'airtime')) {
+      // Only reconcile provider orders after beginPurchase actually debited the
+      // wallet. A pre-debit rejection must stay an ordinary failed attempt.
+      if (purchaseTransactionId && amount > 0 && (serviceType === 'data' || serviceType === 'airtime')) {
         providerOrder = await findProviderOrder(
           serviceType,
           String(body.mobile_number || ''),
@@ -427,9 +412,11 @@ Deno.serve(async (req) => {
             await markPurchasePending(supabase, purchaseTransactionId, failureMetadata);
           }
         } else {
+          // beginPurchase failed before any wallet debit (for example,
+          // insufficient balance). Record the attempt for audit only. Never
+          // refund here: doing so would credit money that was never deducted.
           await recordTransaction(supabase, userId, amount, serviceType, description, decision.status,
             providerOrder?.id?.toString(), failureMetadata);
-          if (decision.refund) await refundWallet(supabase, userId, amount);
         }
         if (!decision.refund) console.warn(`Bonanza unconfirmed failure — wallet NOT refunded (user ${userId}, amount ${amount}, providerOrder=${providerOrder?.id ?? 'none'}/${orderStatus || 'n/a'}): ${err.message}`);
       }
