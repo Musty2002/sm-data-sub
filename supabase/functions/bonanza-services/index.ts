@@ -372,7 +372,9 @@ Deno.serve(async (req) => {
       // matched by phone number + plan/amount within this attempt's time
       // window — a concurrent purchase by another user cannot match it.
       let providerOrder: any = null;
-      if (amount > 0 && (serviceType === 'data' || serviceType === 'airtime')) {
+      // Only reconcile provider orders after beginPurchase actually debited the
+      // wallet. A pre-debit rejection must stay an ordinary failed attempt.
+      if (purchaseTransactionId && amount > 0 && (serviceType === 'data' || serviceType === 'airtime')) {
         providerOrder = await findProviderOrder(
           serviceType,
           String(body.mobile_number || ''),
