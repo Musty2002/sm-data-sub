@@ -81,23 +81,6 @@ async function recordTransaction(
   if (error) console.error('record tx err', error);
 }
 
-async function deductFromWallet(supabase: any, userId: string, amount: number) {
-  const { data, error } = await supabase.rpc('deduct_wallet_balance', {
-    _user_id: userId, _amount: amount,
-  });
-  if (error) { console.error(error); return false; }
-  return data === true;
-}
-
-async function refundWallet(supabase: any, userId: string, amount: number) {
-  const { data: w } = await supabase.from('wallets').select('balance').eq('user_id', userId).single();
-  if (w) {
-    await supabase.from('wallets').update({
-      balance: Number(w.balance) + Number(amount), updated_at: new Date().toISOString(),
-    }).eq('user_id', userId);
-  }
-}
-
 // Read the provider-side wallet balance. Used to decide whether a "failed"
 // response actually cost us money upstream (provider delivered / debited us).
 async function getProviderBalance(): Promise<number | null> {
