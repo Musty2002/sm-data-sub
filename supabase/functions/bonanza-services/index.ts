@@ -360,6 +360,15 @@ Deno.serve(async (req) => {
       });
     } catch (err: any) {
       console.error('Bonanza purchase error', err);
+
+      // Wallet was never debited (e.g. insufficient balance) — surface the
+      // failure without recording a debit or touching the wallet.
+      if (!purchaseTransactionId && String(err?.message || '').includes('Insufficient balance')) {
+        return new Response(JSON.stringify({ success: false, message: 'Insufficient balance' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       const decision = classifyPurchaseFailure(err);
       if (String(err?.message || '').startsWith('PURCHASE_RECORD_UNCONFIRMED:')) {
         decision.refund = false;

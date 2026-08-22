@@ -572,6 +572,9 @@ Deno.serve(async (req) => {
       let amount = 0;
       let description = '';
       let purchaseTransactionId: string | null = null;
+      // True only once money has actually left the wallet. Guards against
+      // refunding an amount that was never deducted (free-purchase exploit).
+      let walletDebited = false;
 
       try {
         if (serviceType === 'airtime') {
@@ -593,6 +596,7 @@ Deno.serve(async (req) => {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
           }
+          walletDebited = true;
 
           result = await purchaseAirtime(networkCategory, body.amount, body.mobile_number, body.network_id);
           
@@ -631,7 +635,9 @@ Deno.serve(async (req) => {
           description = `Data purchase - ${body.mobile_number}`;
 
           const requestId = resolveRequestId(body.request_id);
-          const purchase = await beginPurchase(supabase, {
+          let purchase;
+          try {
+            purchase = await beginPurchase(supabase, {
             userId,
             requestId,
             amount: Number(amount),
@@ -643,8 +649,18 @@ Deno.serve(async (req) => {
               plan: body.plan,
               plan_name: body.plan_name || '',
               provider: 'rgc',
-            },
-          });
+              },
+            });
+          } catch (e: any) {
+            // No wallet debit happened (e.g. insufficient balance). Never
+            // credit the wallet here — just surface the failure.
+            const insufficient = String(e?.message || '').includes('Insufficient balance');
+            return new Response(JSON.stringify({
+              success: false,
+              message: insufficient ? 'Insufficient balance' : (e?.message || 'Unable to start purchase'),
+            }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          }
+          walletDebited = true;
           purchaseTransactionId = purchase.transactionId;
           if (purchase.duplicate) {
             const unconfirmed = purchase.status === 'pending';
@@ -710,6 +726,7 @@ Deno.serve(async (req) => {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
           }
+          walletDebited = true;
 
           result = await purchaseCable(body.plan_id, body.smart_card_number);
           await recordTransaction(supabase, userId, amount, 'tv', description, 'completed', result.reference || undefined, { 
@@ -733,6 +750,7 @@ Deno.serve(async (req) => {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
           }
+          walletDebited = true;
 
           result = await purchaseElectricity(body.discoid, body.MeterType, body.meter_number, body.amount);
           await recordTransaction(supabase, userId, amount, 'electricity', description, 'completed', result.reference || undefined, { 
@@ -758,6 +776,7 @@ Deno.serve(async (req) => {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
           }
+          walletDebited = true;
 
           result = await purchaseExamPin(body.examid, body.quantity);
           await recordTransaction(supabase, userId, amount, 'airtime', description, 'completed', result.reference || undefined, { 
@@ -803,7 +822,7 @@ Deno.serve(async (req) => {
             { error: purchaseError.message, provider: 'rgc', unconfirmed: !decision.refund },
           );
 
-          if (decision.refund && amount > 0) {
+          if (decision.refund && amount > 0 && walletDebited) {
             const { data: wallet } = await supabase.from('wallets').select('balance').eq('user_id', userId).single();
             if (wallet) {
               await supabase.from('wallets').update({
