@@ -2,6 +2,8 @@ import { useState, useEffect, createContext, useContext, ReactNode } from 'react
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { Profile, Wallet, CashbackWallet } from '@/types/database';
+import { loadPinsForUser, resetPinCache } from '@/lib/pinStore';
+
 
 interface ExtendedProfile extends Profile {
   is_blocked?: boolean;
