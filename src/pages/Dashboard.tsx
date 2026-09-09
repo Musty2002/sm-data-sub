@@ -4,7 +4,7 @@ import { AccountCard } from '@/components/dashboard/AccountCard';
 import { ServicesGrid } from '@/components/dashboard/ServicesGrid';
 import { RecentTransactions } from '@/components/dashboard/RecentTransactions';
 import { PromoPopup } from '@/components/PromoPopup';
-import { TransactionPinDialog, isTransactionPinSetup } from '@/components/auth/PinSetupDialog';
+import { TransactionPinDialog, usePinStatus } from '@/components/auth/PinSetupDialog';
 import { Bell, RefreshCw, Menu } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
@@ -19,27 +19,23 @@ export default function Dashboard() {
   const [pullDistance, setPullDistance] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const [showTransactionPinSetup, setShowTransactionPinSetup] = useState(false);
+  const pinStatus = usePinStatus();
 
-  // Check if transaction PIN needs to be set up
+  // Check if transaction PIN needs to be set up (per account, loaded from backend)
   useEffect(() => {
-    const checkTransactionPin = () => {
-      if (!isTransactionPinSetup()) {
-        // Small delay to let the dashboard load first
-        setTimeout(() => {
-          setShowTransactionPinSetup(true);
-        }, 1000);
-      }
-    };
-    
-    checkTransactionPin();
-  }, []);
+    if (!pinStatus.loaded || pinStatus.hasTransactionPin) return;
+    const timer = setTimeout(() => setShowTransactionPinSetup(true), 1000);
+    return () => clearTimeout(timer);
+  }, [pinStatus.loaded, pinStatus.hasTransactionPin]);
 
   const handleTransactionPinComplete = () => {
+    pinStatus.refresh();
     toast({
       title: 'Transaction PIN Set',
       description: 'Your transaction PIN has been created successfully.',
     });
   };
+
 
   const PULL_THRESHOLD = 80;
 
