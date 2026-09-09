@@ -4,7 +4,7 @@ import { Fingerprint, Delete, ArrowRight, User } from 'lucide-react';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { isPinSetup, verifyStoredPin } from './PinSetupDialog';
+import { usePinStatus, verifyStoredPin } from './PinSetupDialog';
 
 interface LockScreenProps {
   userEmail: string;
@@ -27,7 +27,9 @@ export function LockScreen({ userEmail, userName, onUnlock, onSwitchAccount }: L
   } = useBiometricAuth();
 
   const biometricTriggered = useRef(false);
-  const hasPinSetup = isPinSetup();
+  const pinStatus = usePinStatus();
+  const hasPinSetup = pinStatus.hasAppPin;
+
 
   // Auto-trigger biometric on mount (use ref to track if already triggered)
   useEffect(() => {
