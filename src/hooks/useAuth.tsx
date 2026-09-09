@@ -125,6 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               fetchProfile(session.user.id);
               fetchWallet(session.user.id);
               fetchCashbackWallet(session.user.id);
+              loadPinsForUser(session.user.id);
               // Auto-provision virtual account whenever the user signs in
               // (covers fresh signups, email-confirmation logins, and returning users)
               if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
@@ -135,7 +136,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setProfile(null);
             setWallet(null);
             setCashbackWallet(null);
+            resetPinCache();
           }
+
         } catch (err) {
           console.error('Auth state change error:', err);
         }
