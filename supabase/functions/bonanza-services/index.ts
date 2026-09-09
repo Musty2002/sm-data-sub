@@ -131,6 +131,65 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Diagnostic: probe an arbitrary provider GET path (admin use)
+    if (action === 'probe') {
+      const data = await bonanzaRequest(String(body?.path || '/user/'));
+      return new Response(JSON.stringify({ success: true, data }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Plan catalogue used by the admin data pricing page
+    if (action === 'get-services') {
+      const candidates = ['/plans/', '/dataplans/', '/data/plans/', '/network/', '/services/'];
+      let raw: any = null;
+      let usedPath = '';
+      for (const p of candidates) {
+        try {
+          raw = await bonanzaRequest(p);
+          usedPath = p;
+          break;
+        } catch (e) {
+          console.log(`Bonanza catalogue path ${p} failed: ${(e as any)?.message}`);
+        }
+      }
+
+      if (!raw) {
+        return new Response(JSON.stringify({ success: false, message: 'Provider plan list unavailable' }), {
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const netName = (id: any) => ({ 1: 'MTN', 2: 'AIRTEL', 3: 'GLO', 4: '9MOBILE' } as Record<string, string>)[String(id)] || String(id ?? '');
+
+      const list: any[] = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.data) ? raw.data
+        : Array.isArray(raw?.results) ? raw.results
+        : Array.isArray(raw?.plans) ? raw.plans
+        : Array.isArray(raw?.response) ? raw.response
+        : [];
+
+      const bundles = list.map((b: any) => {
+        const network = netName(b.network ?? b.network_id ?? b.networkId ?? b.network_name);
+        const type = String(b.plan_type ?? b.type ?? b.data_type ?? b.category ?? 'DATA').toUpperCase();
+        return {
+          id: String(b.id ?? b.plan_id ?? b.dataplan_id ?? ''),
+          product_id: String(b.id ?? b.plan_id ?? b.dataplan_id ?? ''),
+          service: 'DATA',
+          amount: String(b.price ?? b.amount ?? b.plan_amount ?? 0),
+          name: String(b.name ?? b.plan_name ?? b.size ?? b.plan ?? ''),
+          category: `${network} ${type}`.trim(),
+          available: b.available !== false && b.is_active !== false,
+          validity: b.validity ?? b.duration ?? b.plan_validity ?? null,
+        };
+      }).filter((b: any) => b.id && b.name);
+
+      return new Response(JSON.stringify({ success: true, path: usedPath, data: bundles, raw: bundles.length ? undefined : raw }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Diagnostic: look up a single order by reference
     if (action === 'transaction-status') {
       const data = await bonanzaRequest(`/transaction/status/?reference=${encodeURIComponent(String(body?.reference || ''))}`);
@@ -138,6 +197,7 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
 
     if (action !== 'purchase') {
       return new Response(JSON.stringify({ success: false, message: 'Invalid action' }), {
