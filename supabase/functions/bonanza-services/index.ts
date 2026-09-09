@@ -139,56 +139,39 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Plan catalogue used by the admin data pricing page
+    // Plan catalogue used by the admin data pricing page.
+    // Bonanza has no public plan-list endpoint, so we serve the stored
+    // Bonanza price list (imported from the provider price sheet).
     if (action === 'get-services') {
-      const candidates = ['/plans/', '/dataplans/', '/data/plans/', '/network/', '/services/'];
-      let raw: any = null;
-      let usedPath = '';
-      for (const p of candidates) {
-        try {
-          raw = await bonanzaRequest(p);
-          usedPath = p;
-          break;
-        } catch (e) {
-          console.log(`Bonanza catalogue path ${p} failed: ${(e as any)?.message}`);
-        }
-      }
+      const { data: rows, error } = await supabase
+        .from('data_bundles')
+        .select('plan_code, plan_name, data_type, network_code, api_price, app_price, validity, is_active')
+        .eq('provider', 'bonanza')
+        .order('data_type', { ascending: true })
+        .order('api_price', { ascending: true });
 
-      if (!raw) {
-        return new Response(JSON.stringify({ success: false, message: 'Provider plan list unavailable' }), {
+      if (error) {
+        return new Response(JSON.stringify({ success: false, message: error.message }), {
           status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      const netName = (id: any) => ({ 1: 'MTN', 2: 'AIRTEL', 3: 'GLO', 4: '9MOBILE' } as Record<string, string>)[String(id)] || String(id ?? '');
+      const bundles = (rows || []).map((b: any) => ({
+        id: String(b.plan_code),
+        product_id: String(b.plan_code),
+        service: 'DATA',
+        amount: String(b.api_price),
+        name: b.plan_name,
+        category: b.data_type,
+        available: true,
+        validity: b.validity,
+      }));
 
-      const list: any[] = Array.isArray(raw)
-        ? raw
-        : Array.isArray(raw?.data) ? raw.data
-        : Array.isArray(raw?.results) ? raw.results
-        : Array.isArray(raw?.plans) ? raw.plans
-        : Array.isArray(raw?.response) ? raw.response
-        : [];
-
-      const bundles = list.map((b: any) => {
-        const network = netName(b.network ?? b.network_id ?? b.networkId ?? b.network_name);
-        const type = String(b.plan_type ?? b.type ?? b.data_type ?? b.category ?? 'DATA').toUpperCase();
-        return {
-          id: String(b.id ?? b.plan_id ?? b.dataplan_id ?? ''),
-          product_id: String(b.id ?? b.plan_id ?? b.dataplan_id ?? ''),
-          service: 'DATA',
-          amount: String(b.price ?? b.amount ?? b.plan_amount ?? 0),
-          name: String(b.name ?? b.plan_name ?? b.size ?? b.plan ?? ''),
-          category: `${network} ${type}`.trim(),
-          available: b.available !== false && b.is_active !== false,
-          validity: b.validity ?? b.duration ?? b.plan_validity ?? null,
-        };
-      }).filter((b: any) => b.id && b.name);
-
-      return new Response(JSON.stringify({ success: true, path: usedPath, data: bundles, raw: bundles.length ? undefined : raw }), {
+      return new Response(JSON.stringify({ success: true, data: bundles }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
 
     // Diagnostic: look up a single order by reference
     if (action === 'transaction-status') {
