@@ -201,12 +201,20 @@ export default function DataPricingPage() {
 
   const getNetworkGroup = (category: string): string => {
     const upper = category.toUpperCase();
+    // Match on the leading network word first, so labels like
+    // "9MOBILE MTN AWOOF" are grouped under 9mobile, not MTN.
+    const first = upper.trim().split(/\s+/)[0];
+    if (first === '9MOBILE' || first === 'ETISALAT') return '9MOBILE';
+    if (first === 'MTN') return 'MTN';
+    if (first === 'AIRTEL') return 'AIRTEL';
+    if (first === 'GLO') return 'GLO';
+    if (upper.includes('9MOBILE') || upper.includes('ETISALAT')) return '9MOBILE';
     if (upper.includes('MTN')) return 'MTN';
     if (upper.includes('AIRTEL')) return 'AIRTEL';
     if (upper.includes('GLO')) return 'GLO';
-    if (upper.includes('9MOBILE') || upper.includes('ETISALAT')) return '9MOBILE';
     return category;
   };
+
 
   const handleChange = (id: string, field: keyof DataBundle, value: any) => {
     setEditedItems(prev => ({
