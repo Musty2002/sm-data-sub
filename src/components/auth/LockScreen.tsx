@@ -141,12 +141,13 @@ export function LockScreen({ userEmail, userName, onUnlock, onSwitchAccount }: L
   const autoUnlockedRef = useRef(false);
   
   useEffect(() => {
-    if (!hasPinSetup && !biometricAvailable && !autoUnlockedRef.current) {
+    if (pinStatus.loaded && !hasPinSetup && !biometricAvailable && !autoUnlockedRef.current) {
       // No security set up yet, unlock and let the app prompt for setup
       autoUnlockedRef.current = true;
       onUnlock();
     }
-  }, [hasPinSetup, biometricAvailable, onUnlock]);
+  }, [pinStatus.loaded, hasPinSetup, biometricAvailable, onUnlock]);
+
 
   // If no PIN setup but biometrics available, show only biometric option
   if (!hasPinSetup && biometricAvailable) {
