@@ -47,18 +47,20 @@ export default function Security() {
     confirmPassword: '',
   });
   const [pinSetupOpen, setPinSetupOpen] = useState(false);
-  const [hasPinSetup, setHasPinSetup] = useState(isPinSetup());
+  const pinStatus = usePinStatus();
+  const hasPinSetup = pinStatus.hasAppPin;
+  const hasTransactionPin = pinStatus.hasTransactionPin;
   const [transactionPinOpen, setTransactionPinOpen] = useState(false);
-  const [hasTransactionPin, setHasTransactionPin] = useState(isTransactionPinSetup());
   const [biometricForTransactions, setBiometricForTransactionsState] = useState(isBiometricForTransactionsEnabled());
   const [forgotPinOpen, setForgotPinOpen] = useState(false);
 
-  // Check PIN status on mount
+  // Refresh PIN status when dialogs close
   useEffect(() => {
-    setHasPinSetup(isPinSetup());
     setBiometricForTransactionsState(isBiometricForTransactionsEnabled());
-    setHasTransactionPin(isTransactionPinSetup());
+    pinStatus.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinSetupOpen, transactionPinOpen]);
+
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
