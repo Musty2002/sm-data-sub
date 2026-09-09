@@ -550,6 +550,33 @@ export type Database = {
         }
         Relationships: []
       }
+      user_pins: {
+        Row: {
+          app_pin_hash: string | null
+          created_at: string
+          id: string
+          transaction_pin_hash: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          app_pin_hash?: string | null
+          created_at?: string
+          id?: string
+          transaction_pin_hash?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          app_pin_hash?: string | null
+          created_at?: string
+          id?: string
+          transaction_pin_hash?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           id: string

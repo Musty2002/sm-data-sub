@@ -4,7 +4,7 @@ import { Fingerprint, Delete, ArrowRight, User } from 'lucide-react';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { isPinSetup, verifyStoredPin } from './PinSetupDialog';
+import { usePinStatus, verifyStoredPin } from './PinSetupDialog';
 
 interface LockScreenProps {
   userEmail: string;
@@ -27,7 +27,9 @@ export function LockScreen({ userEmail, userName, onUnlock, onSwitchAccount }: L
   } = useBiometricAuth();
 
   const biometricTriggered = useRef(false);
-  const hasPinSetup = isPinSetup();
+  const pinStatus = usePinStatus();
+  const hasPinSetup = pinStatus.hasAppPin;
+
 
   // Auto-trigger biometric on mount (use ref to track if already triggered)
   useEffect(() => {
@@ -139,12 +141,13 @@ export function LockScreen({ userEmail, userName, onUnlock, onSwitchAccount }: L
   const autoUnlockedRef = useRef(false);
   
   useEffect(() => {
-    if (!hasPinSetup && !biometricAvailable && !autoUnlockedRef.current) {
+    if (pinStatus.loaded && !hasPinSetup && !biometricAvailable && !autoUnlockedRef.current) {
       // No security set up yet, unlock and let the app prompt for setup
       autoUnlockedRef.current = true;
       onUnlock();
     }
-  }, [hasPinSetup, biometricAvailable, onUnlock]);
+  }, [pinStatus.loaded, hasPinSetup, biometricAvailable, onUnlock]);
+
 
   // If no PIN setup but biometrics available, show only biometric option
   if (!hasPinSetup && biometricAvailable) {

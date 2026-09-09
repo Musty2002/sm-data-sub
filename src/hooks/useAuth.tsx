@@ -2,6 +2,8 @@ import { useState, useEffect, createContext, useContext, ReactNode } from 'react
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { Profile, Wallet, CashbackWallet } from '@/types/database';
+import { loadPinsForUser, resetPinCache } from '@/lib/pinStore';
+
 
 interface ExtendedProfile extends Profile {
   is_blocked?: boolean;
@@ -123,6 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               fetchProfile(session.user.id);
               fetchWallet(session.user.id);
               fetchCashbackWallet(session.user.id);
+              loadPinsForUser(session.user.id);
               // Auto-provision virtual account whenever the user signs in
               // (covers fresh signups, email-confirmation logins, and returning users)
               if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
@@ -133,7 +136,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setProfile(null);
             setWallet(null);
             setCashbackWallet(null);
+            resetPinCache();
           }
+
         } catch (err) {
           console.error('Auth state change error:', err);
         }
@@ -150,9 +155,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           fetchProfile(session.user.id);
           fetchWallet(session.user.id);
           fetchCashbackWallet(session.user.id);
+          loadPinsForUser(session.user.id);
           // Auto-provision virtual account on app load if missing
           ensureVirtualAccount(session.user.id, session.user);
         }
+
       } catch (err) {
         console.error('Get session error:', err);
       }
@@ -292,7 +299,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null);
     setWallet(null);
     setCashbackWallet(null);
+    resetPinCache();
   };
+
 
   const refreshProfile = async () => {
     if (user) {

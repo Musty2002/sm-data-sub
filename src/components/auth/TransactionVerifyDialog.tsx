@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Delete, Lock, Check, AlertCircle, Fingerprint, Loader2 } from 'lucide-react';
-import { verifyTransactionPin, isTransactionPinSetup } from './PinSetupDialog';
+import { verifyTransactionPin, usePinStatus } from './PinSetupDialog';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
 import { toast } from 'sonner';
 
@@ -40,7 +40,7 @@ export function TransactionVerifyDialog({
   
   const { isAvailable, isEnabled, biometryName, authenticate } = useBiometricAuth();
   const biometricEnabled = isBiometricForTransactionsEnabled() && isAvailable && isEnabled;
-  const hasPinSetup = isTransactionPinSetup();
+  const hasPinSetup = usePinStatus().hasTransactionPin;
 
   useEffect(() => {
     if (open) {
