@@ -131,6 +131,48 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Diagnostic: probe an arbitrary provider GET path (admin use)
+    if (action === 'probe') {
+      const data = await bonanzaRequest(String(body?.path || '/user/'));
+      return new Response(JSON.stringify({ success: true, data }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Plan catalogue used by the admin data pricing page.
+    // Bonanza has no public plan-list endpoint, so we serve the stored
+    // Bonanza price list (imported from the provider price sheet).
+    if (action === 'get-services') {
+      const { data: rows, error } = await supabase
+        .from('data_bundles')
+        .select('plan_code, plan_name, data_type, network_code, api_price, app_price, validity, is_active')
+        .eq('provider', 'bonanza')
+        .order('data_type', { ascending: true })
+        .order('api_price', { ascending: true });
+
+      if (error) {
+        return new Response(JSON.stringify({ success: false, message: error.message }), {
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const bundles = (rows || []).map((b: any) => ({
+        id: String(b.plan_code),
+        product_id: String(b.plan_code),
+        service: 'DATA',
+        amount: String(b.api_price),
+        name: b.plan_name,
+        category: b.data_type,
+        available: true,
+        validity: b.validity,
+      }));
+
+      return new Response(JSON.stringify({ success: true, data: bundles }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+
     // Diagnostic: look up a single order by reference
     if (action === 'transaction-status') {
       const data = await bonanzaRequest(`/transaction/status/?reference=${encodeURIComponent(String(body?.reference || ''))}`);
@@ -138,6 +180,7 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
 
     if (action !== 'purchase') {
       return new Response(JSON.stringify({ success: false, message: 'Invalid action' }), {
