@@ -13,12 +13,12 @@ import { useBiometricAuth } from '@/hooks/useBiometricAuth';
 import { useAuth } from '@/hooks/useAuth';
 import { 
   PinSetupDialog, 
-  isPinSetup, 
   clearStoredPin, 
   TransactionPinDialog,
-  isTransactionPinSetup,
-  clearTransactionPin
+  clearTransactionPin,
+  usePinStatus
 } from '@/components/auth/PinSetupDialog';
+
 import { 
   isBiometricForTransactionsEnabled, 
   setBiometricForTransactions 
@@ -116,17 +116,16 @@ export default function Security() {
     }
   };
 
-  const handleResetPin = () => {
-    clearStoredPin();
-    setHasPinSetup(false);
+  const handleResetPin = async () => {
+    await clearStoredPin();
     setPinSetupOpen(true);
   };
 
-  const handleResetTransactionPin = () => {
-    clearTransactionPin();
-    setHasTransactionPin(false);
+  const handleResetTransactionPin = async () => {
+    await clearTransactionPin();
     setTransactionPinOpen(true);
   };
+
 
   return (
     <MobileLayout showNav={false}>
@@ -419,7 +418,7 @@ export default function Security() {
             open={pinSetupOpen} 
             onOpenChange={setPinSetupOpen}
             onComplete={() => {
-              setHasPinSetup(true);
+              pinStatus.refresh();
               toast.success('PIN set up successfully!');
             }}
           />
@@ -428,7 +427,7 @@ export default function Security() {
             open={transactionPinOpen}
             onOpenChange={setTransactionPinOpen}
             onComplete={() => {
-              setHasTransactionPin(true);
+              pinStatus.refresh();
               toast.success('Transaction PIN set up successfully!');
             }}
           />
@@ -437,11 +436,12 @@ export default function Security() {
             open={forgotPinOpen}
             onOpenChange={setForgotPinOpen}
             onComplete={() => {
-              setHasTransactionPin(true);
+              pinStatus.refresh();
               toast.success('Transaction PIN reset successfully!');
             }}
             userEmail={user?.email || ''}
           />
+
 
           {/* Active Sessions */}
           <Card>
