@@ -299,7 +299,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null);
     setWallet(null);
     setCashbackWallet(null);
+    resetPinCache();
   };
+
 
   const refreshProfile = async () => {
     if (user) {
