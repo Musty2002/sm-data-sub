@@ -84,8 +84,8 @@ export function PinSetupDialog({
 
     setLoading(true);
     try {
-      const hashedPin = await hashPin(pin);
-      localStorage.setItem(PIN_HASH_KEY, hashedPin);
+      await saveAppPin(pin);
+
       onComplete();
       onOpenChange(false);
       resetState();
