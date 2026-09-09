@@ -155,9 +155,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           fetchProfile(session.user.id);
           fetchWallet(session.user.id);
           fetchCashbackWallet(session.user.id);
+          loadPinsForUser(session.user.id);
           // Auto-provision virtual account on app load if missing
           ensureVirtualAccount(session.user.id, session.user);
         }
+
       } catch (err) {
         console.error('Get session error:', err);
       }
