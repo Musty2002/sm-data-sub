@@ -9,23 +9,28 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const BONANZA_BASE_URL = 'https://bonanzasubapi.com/api';
+const BONANZA_BASE_URL = 'https://bonanzasub.com/api';
 
 function cleanSecret(v: string | undefined | null) {
   return (v || '').trim().replace(/^['"]|['"]$/g, '').trim();
 }
 
-// Network id mapping used by Bonanza (typical Nigerian VTU aggregator convention)
-// 1=MTN, 2=GLO, 3=9MOBILE, 4=AIRTEL
+// Network ids per Bonanza docs: 1=MTN, 2=AIRTEL, 3=GLO, 4=9MOBILE
 function getNetworkId(name: string): number {
   const n = (name || '').toString().trim().toUpperCase();
   const map: Record<string, number> = {
-    'MTN': 1, 'GLO': 2, '9MOBILE': 3, 'ETISALAT': 3, 'AIRTEL': 4,
+    'MTN': 1, 'AIRTEL': 2, 'GLO': 3, '9MOBILE': 4, 'ETISALAT': 4,
     '1': 1, '2': 2, '3': 3, '4': 4,
   };
   const id = map[n];
   if (!id) throw new Error(`Unsupported network: ${name}`);
   return id;
+}
+
+// Deterministic provider reference derived from our request id, so a retry of
+// the same purchase reuses the same upstream reference.
+function buildRef(prefix: string, requestId: string) {
+  return `${prefix}_${requestId.replace(/-/g, '').slice(0, 24).toUpperCase()}`;
 }
 
 async function bonanzaRequest(path: string, method: 'GET' | 'POST' = 'GET', body?: object) {
@@ -54,7 +59,6 @@ async function bonanzaRequest(path: string, method: 'GET' | 'POST' = 'GET', body
   try { data = text ? JSON.parse(text) : {}; } catch { parsed = false; data = { message: text }; }
   console.log(`Bonanza status ${res.status}`, JSON.stringify(data));
 
-  // Non-JSON body or 5xx: we can't tell if provider processed the request.
   if (!parsed) {
     throw new AmbiguousProviderError(`Unexpected Bonanza response (status ${res.status})`, { status: res.status, raw: text });
   }
@@ -62,11 +66,18 @@ async function bonanzaRequest(path: string, method: 'GET' | 'POST' = 'GET', body
     throw new AmbiguousProviderError(`Bonanza server error (${res.status})`, { status: res.status, raw: data });
   }
 
-  if (!res.ok || data?.Status === 'failed' || data?.status === 'failed' || data?.success === false) {
-    const msg = data?.message || data?.api_response || data?.detail || `Bonanza request failed (${res.status})`;
+  const statusText = String(data?.status ?? '').toLowerCase();
+  if (!res.ok || statusText === 'failed' || statusText === 'error' || data?.success === false) {
+    const msg = data?.message || data?.msg || data?.api_response || data?.detail || `Bonanza request failed (${res.status})`;
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
   }
   return data;
+}
+
+function isSuccessful(result: any) {
+  const s1 = String(result?.Status ?? '').toLowerCase();
+  const s2 = String(result?.status ?? '').toLowerCase();
+  return s1 === 'successful' || s1 === 'success' || s2 === 'successful' || s2 === 'success' || result?.success === true;
 }
 
 async function recordTransaction(
@@ -81,48 +92,14 @@ async function recordTransaction(
   if (error) console.error('record tx err', error);
 }
 
-// Read the provider-side wallet balance. Used to decide whether a "failed"
-// response actually cost us money upstream (provider delivered / debited us).
-async function getProviderBalance(): Promise<number | null> {
+// Ask Bonanza for the exact order we sent, by our own reference. This is
+// race-safe: it can never match another user's purchase.
+async function lookupProviderTransaction(reference: string): Promise<any | null> {
   try {
-    const data = await bonanzaRequest('/user/');
-    const raw = data?.user?.Account_Balance ?? data?.user?.wallet_balance ?? data?.Account_Balance;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : null;
+    const data = await bonanzaRequest(`/transaction/status/?reference=${encodeURIComponent(reference)}`);
+    return data?.response ?? null;
   } catch (e) {
-    console.warn('Could not read Bonanza balance', e);
-    return null;
-  }
-}
-
-function digitsOnly(v: unknown) {
-  return String(v ?? '').replace(/\D/g, '');
-}
-
-// Look up the actual order on the provider side, matched by phone number +
-// plan/amount within a short time window. This is race-safe: unlike comparing
-// wallet balances, a concurrent purchase by another user can't be mistaken for
-// this one.
-async function findProviderOrder(
-  kind: 'data' | 'airtime',
-  mobileNumber: string,
-  match: { plan?: number; amount?: number },
-  sinceMs: number,
-): Promise<any | null> {
-  try {
-    const data = await bonanzaRequest(kind === 'airtime' ? '/topup/' : '/data/');
-    const rows: any[] = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
-    const phone = digitsOnly(mobileNumber).slice(-10);
-    return rows.find((r) => {
-      if (digitsOnly(r?.mobile_number).slice(-10) !== phone) return false;
-      const created = Date.parse(r?.create_date ?? '');
-      if (Number.isFinite(created) && created < sinceMs - 120_000) return false;
-      if (match.plan !== undefined) return Number(r?.plan) === Number(match.plan);
-      if (match.amount !== undefined) return Math.abs(Number(r?.amount ?? r?.plan_amount) - match.amount) < 1;
-      return true;
-    }) ?? null;
-  } catch (e) {
-    console.warn('Could not list Bonanza orders', e);
+    console.warn('Could not look up Bonanza transaction', e);
     return null;
   }
 }
@@ -146,7 +123,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { action, serviceType } = body || {};
 
-    // Public: fetch balance/user info (used by admin to test connectivity)
+    // Balance / account info (admin connectivity test)
     if (action === 'get-user') {
       const data = await bonanzaRequest('/user/');
       return new Response(JSON.stringify({ success: true, data }), {
@@ -154,55 +131,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Diagnostic: list recent provider-side orders (data or topup)
-    if (action === 'list-orders') {
-      const path = body?.kind === 'airtime' ? '/topup/' : '/data/';
-      const data = await bonanzaRequest(path);
+    // Diagnostic: look up a single order by reference
+    if (action === 'transaction-status') {
+      const data = await bonanzaRequest(`/transaction/status/?reference=${encodeURIComponent(String(body?.reference || ''))}`);
       return new Response(JSON.stringify({ success: true, data }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
-    }
-
-    // Public: fetch data plans list (endpoint convention on Bonanza-style APIs)
-    if (action === 'get-services' && serviceType === 'data') {
-      try {
-        const data = await bonanzaRequest('/user/');
-        // Bonanza's user endpoint typically returns a MOBILE_NETWORK / Dataplans block
-        const plans: any[] = [];
-        const networks = data?.Dataplans || {};
-        const pushPlan = (netKey: string, p: any) => {
-          if (!p || (!p.dataplan_id && !p.id)) return;
-          plans.push({
-            id: Number(p.dataplan_id || p.id),
-            product_id: Number(p.dataplan_id || p.id),
-            service: p.plan_type || 'DATA',
-            amount: String(p.plan_amount || p.amount || ''),
-            name: [p.plan, p.month_validate].filter(Boolean).join(' - '),
-            plan_size: p.plan,
-            validity: p.month_validate,
-            category: `${(p.plan_network || netKey || '').toUpperCase().replace('_PLAN','')} ${p.plan_type || ''}`.trim(),
-            available: true,
-            provider: 'bonanza',
-          });
-        };
-        // Structure: Dataplans.MTN_PLAN.{CORPORATE|SME|GIFTING}[]
-        Object.entries(networks).forEach(([netKey, group]: [string, any]) => {
-          if (Array.isArray(group)) {
-            group.forEach((p: any) => pushPlan(netKey, p));
-          } else if (group && typeof group === 'object') {
-            Object.values(group).forEach((arr: any) => {
-              if (Array.isArray(arr)) arr.forEach((p: any) => pushPlan(netKey, p));
-            });
-          }
-        });
-        return new Response(JSON.stringify({ success: true, data: plans, raw: data }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      } catch (e: any) {
-        return new Response(JSON.stringify({ success: false, message: e.message }), {
-          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
     }
 
     if (action !== 'purchase') {
@@ -235,8 +169,8 @@ Deno.serve(async (req) => {
     let amount = 0;
     let description = '';
     let result: any;
-    let attemptStartedAt = Date.now();
     let purchaseTransactionId: string | null = null;
+    let providerRef: string | null = null;
 
     try {
       if (serviceType === 'data') {
@@ -247,6 +181,7 @@ Deno.serve(async (req) => {
         description = `Data purchase - ${body.mobile_number}`;
 
         const requestId = resolveRequestId(body.request_id);
+        providerRef = buildRef('DATA', requestId);
         const purchase = await beginPurchase(supabase, {
           userId,
           requestId,
@@ -255,6 +190,7 @@ Deno.serve(async (req) => {
           description,
           metadata: {
             request_id: requestId,
+            provider_ref: providerRef,
             mobile_number: body.mobile_number,
             plan: body.plan,
             plan_name: body.plan_name,
@@ -273,23 +209,21 @@ Deno.serve(async (req) => {
         }
 
         const networkId = getNetworkId(body.network || body.network_name || '');
-        attemptStartedAt = Date.now();
         result = await bonanzaRequest('/data/', 'POST', {
-          network: networkId,
-          mobile_number: body.mobile_number,
-          plan: Number(body.plan),
-          Ported_number: true,
+          network: String(networkId),
+          phone: String(body.mobile_number),
+          ref: providerRef,
+          data_plan: String(body.plan),
+          ported_number: true,
         });
 
-        const success = result?.Status?.toString().toLowerCase() === 'successful' ||
-                        result?.status?.toString().toLowerCase() === 'successful' ||
-                        result?.Status === 'success' || result?.success === true;
-        const status = success ? 'completed' : 'pending';
-
-        const resultMetadata = { mobile_number: body.mobile_number, plan: body.plan, plan_name: body.plan_name,
-          provider: 'bonanza', api_response: result };
+        const status = isSuccessful(result) ? 'completed' : 'pending';
+        const resultMetadata = {
+          mobile_number: body.mobile_number, plan: body.plan, plan_name: body.plan_name,
+          provider: 'bonanza', provider_ref: providerRef, api_response: result,
+        };
         if (status === 'completed') {
-          await completePurchase(supabase, purchaseTransactionId, result?.id?.toString() || result?.reference, resultMetadata);
+          await completePurchase(supabase, purchaseTransactionId, providerRef, resultMetadata);
         } else {
           await markPurchasePending(supabase, purchaseTransactionId, resultMetadata);
         }
@@ -302,6 +236,7 @@ Deno.serve(async (req) => {
         description = `Airtime purchase - ${body.mobile_number}`;
 
         const airtimeRequestId = resolveRequestId(body.request_id);
+        providerRef = buildRef('AIRTIME', airtimeRequestId);
         const airtimePurchase = await beginPurchase(supabase, {
           userId,
           requestId: airtimeRequestId,
@@ -310,6 +245,7 @@ Deno.serve(async (req) => {
           description,
           metadata: {
             request_id: airtimeRequestId,
+            provider_ref: providerRef,
             mobile_number: body.mobile_number,
             network: body.network,
             provider: 'bonanza',
@@ -327,26 +263,22 @@ Deno.serve(async (req) => {
         }
 
         const networkId = getNetworkId(body.network);
-        attemptStartedAt = Date.now();
-        result = await bonanzaRequest('/topup/', 'POST', {
-          network: networkId,
-          amount: String(amount),
-          mobile_number: body.mobile_number,
-          Ported_number: true,
+        result = await bonanzaRequest('/airtime/', 'POST', {
+          network: String(networkId),
+          phone: String(body.mobile_number),
+          ref: providerRef,
           airtime_type: 'VTU',
+          ported_number: true,
+          amount: String(amount),
         });
 
-        const success = result?.Status?.toString().toLowerCase() === 'successful' ||
-                        result?.status?.toString().toLowerCase() === 'successful' ||
-                        result?.success === true;
-        const status = success ? 'completed' : 'pending';
-
+        const status = isSuccessful(result) ? 'completed' : 'pending';
         const airtimeMetadata = {
           mobile_number: body.mobile_number, network: body.network,
-          provider: 'bonanza', api_response: result,
+          provider: 'bonanza', provider_ref: providerRef, api_response: result,
         };
         if (status === 'completed') {
-          await completePurchase(supabase, purchaseTransactionId, result?.id?.toString() || result?.reference, airtimeMetadata);
+          await completePurchase(supabase, purchaseTransactionId, providerRef, airtimeMetadata);
         } else {
           await markPurchasePending(supabase, purchaseTransactionId, airtimeMetadata);
         }
@@ -376,44 +308,34 @@ Deno.serve(async (req) => {
         decision.userMessage = 'The provider accepted your request and confirmation is pending. Please check transaction history shortly.';
       }
 
-      // Even for "definitive" 4xx rejections, Bonanza sometimes still creates
-      // and processes the order. Look up THIS order on the provider side,
-      // matched by phone number + plan/amount within this attempt's time
-      // window — a concurrent purchase by another user cannot match it.
+      // Even for "definitive" rejections, Bonanza sometimes still processes the
+      // order. Look up THIS order upstream by our own reference.
       let providerOrder: any = null;
-      // Only reconcile provider orders after beginPurchase actually debited the
-      // wallet. A pre-debit rejection must stay an ordinary failed attempt.
-      if (purchaseTransactionId && amount > 0 && (serviceType === 'data' || serviceType === 'airtime')) {
-        providerOrder = await findProviderOrder(
-          serviceType,
-          String(body.mobile_number || ''),
-          serviceType === 'data' ? { plan: Number(body.plan) } : { amount },
-          attemptStartedAt,
-        );
+      if (purchaseTransactionId && providerRef) {
+        providerOrder = await lookupProviderTransaction(providerRef);
       }
-      const orderStatus = String(providerOrder?.Status ?? providerOrder?.status ?? '').toLowerCase();
+      const orderStatus = String(providerOrder?.status ?? providerOrder?.Status ?? '').toLowerCase();
       const providerDelivered = orderStatus === 'successful' || orderStatus === 'success' ||
                                 orderStatus === 'processing' || orderStatus === 'pending';
 
       if (providerDelivered) {
-        // Order exists upstream and was accepted — never refund.
         decision.refund = false;
         decision.status = 'pending';
         decision.userMessage =
           "Your order was accepted by the provider but we couldn't confirm delivery yet. It's saved and will be reconciled — contact support if it doesn't arrive.";
-      } else if (providerOrder && orderStatus === 'failed') {
-        // Provider explicitly recorded this exact order as failed → refund.
+      } else if (providerOrder && (orderStatus === 'failed' || orderStatus === 'refunded')) {
         decision.refund = true;
         decision.status = 'failed';
       }
 
       if (amount > 0) {
         const failureMetadata = {
-            error: err.message, provider: 'bonanza', unconfirmed: !decision.refund,
-            mobile_number: body.mobile_number,
-            provider_order: providerOrder ?? null,
-            provider_order_status: orderStatus || null,
-          };
+          error: err.message, provider: 'bonanza', unconfirmed: !decision.refund,
+          mobile_number: body.mobile_number,
+          provider_ref: providerRef,
+          provider_order: providerOrder ?? null,
+          provider_order_status: orderStatus || null,
+        };
         if (purchaseTransactionId) {
           if (decision.refund) {
             await refundPurchase(supabase, purchaseTransactionId, err.message, failureMetadata);
@@ -421,13 +343,10 @@ Deno.serve(async (req) => {
             await markPurchasePending(supabase, purchaseTransactionId, failureMetadata);
           }
         } else {
-          // beginPurchase failed before any wallet debit (for example,
-          // insufficient balance). Record the attempt for audit only. Never
-          // refund here: doing so would credit money that was never deducted.
           await recordTransaction(supabase, userId, amount, serviceType, description, decision.status,
-            providerOrder?.id?.toString(), failureMetadata);
+            providerRef ?? undefined, failureMetadata);
         }
-        if (!decision.refund) console.warn(`Bonanza unconfirmed failure — wallet NOT refunded (user ${userId}, amount ${amount}, providerOrder=${providerOrder?.id ?? 'none'}/${orderStatus || 'n/a'}): ${err.message}`);
+        if (!decision.refund) console.warn(`Bonanza unconfirmed failure — wallet NOT refunded (user ${userId}, amount ${amount}, ref ${providerRef}/${orderStatus || 'n/a'}): ${err.message}`);
       }
       return new Response(JSON.stringify({
         success: false, message: decision.userMessage, unconfirmed: !decision.refund,
