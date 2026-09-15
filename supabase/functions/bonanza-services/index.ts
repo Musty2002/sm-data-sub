@@ -104,6 +104,99 @@ async function lookupProviderTransaction(reference: string): Promise<any | null>
   }
 }
 
+function extractDataSizeGB(planName: string): number {
+  if (!planName) return 0;
+  const gbMatch = planName.match(/(\d+\.?\d*)\s*GB/i);
+  if (gbMatch) return parseFloat(gbMatch[1]);
+  const mbMatch = planName.match(/(\d+\.?\d*)\s*MB/i);
+  if (mbMatch) return parseFloat(mbMatch[1]) / 1024;
+  return 0;
+}
+
+async function getCashbackConfig(supabase: any) {
+  const fallback = { enabled: true, data_rate: 5, data_unit: '1GB', airtime_rate: 2, airtime_unit: 100 };
+  try {
+    const { data } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'cashback_config')
+      .maybeSingle();
+    return { ...fallback, ...((data?.value as Record<string, unknown>) || {}) };
+  } catch (_e) {
+    return fallback;
+  }
+}
+
+// Award cashback: data => rate per full GB, airtime => rate per unit spent
+async function awardCashback(
+  supabase: any,
+  userId: string,
+  category: 'data' | 'airtime',
+  amount: number,
+  planName: string | undefined,
+  description: string,
+) {
+  try {
+    const config = await getCashbackConfig(supabase);
+    if (config.enabled === false) return;
+
+    let cashback = 0;
+    if (category === 'data') {
+      const gb = extractDataSizeGB(planName || '');
+      cashback = Math.floor(gb) * Number(config.data_rate || 0);
+    } else {
+      const unit = Number(config.airtime_unit || 100) || 100;
+      cashback = Math.floor(amount / unit) * Number(config.airtime_rate || 0);
+    }
+    if (!cashback || cashback <= 0) return;
+
+    let { data: wallet } = await supabase
+      .from('cashback_wallets')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (!wallet) {
+      const { data: created, error: createError } = await supabase
+        .from('cashback_wallets')
+        .insert({ user_id: userId, balance: 0, total_earned: 0, total_withdrawn: 0 })
+        .select()
+        .single();
+      if (createError) {
+        console.error('Error creating cashback wallet:', createError);
+        return;
+      }
+      wallet = created;
+    }
+
+    const { error: updateError } = await supabase
+      .from('cashback_wallets')
+      .update({
+        balance: Number(wallet.balance) + cashback,
+        total_earned: Number(wallet.total_earned) + cashback,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', userId);
+
+    if (updateError) {
+      console.error('Error updating cashback wallet:', updateError);
+      return;
+    }
+
+    await supabase.from('cashback_transactions').insert({
+      user_id: userId,
+      amount: cashback,
+      type: 'earned',
+      category,
+      description: `Cashback from ${description}`,
+    });
+
+    console.log(`Awarded ${cashback} naira cashback (${category}) to ${userId}`);
+  } catch (error) {
+    console.error('Error awarding cashback:', error);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
@@ -267,6 +360,7 @@ Deno.serve(async (req) => {
         };
         if (status === 'completed') {
           await completePurchase(supabase, purchaseTransactionId, providerRef, resultMetadata);
+          await awardCashback(supabase, userId, 'data', amount, body.plan_name, description);
         } else {
           await markPurchasePending(supabase, purchaseTransactionId, resultMetadata);
         }
@@ -322,6 +416,7 @@ Deno.serve(async (req) => {
         };
         if (status === 'completed') {
           await completePurchase(supabase, purchaseTransactionId, providerRef, airtimeMetadata);
+          await awardCashback(supabase, userId, 'airtime', amount, undefined, description);
         } else {
           await markPurchasePending(supabase, purchaseTransactionId, airtimeMetadata);
         }
