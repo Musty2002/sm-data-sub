@@ -621,11 +621,7 @@ Deno.serve(async (req) => {
             }
           );
 
-          // Calculate and add cashback for airtime
-          const airtimeCashback = calculateCashback('airtime', amount);
-          if (airtimeCashback > 0) {
-            await addCashback(supabase, userId, airtimeCashback, 'airtime', description);
-          }
+          // Airtime cashback disabled
 
         } else if (serviceType === 'data') {
           if (!body.plan || !body.mobile_number || !body.amount) {

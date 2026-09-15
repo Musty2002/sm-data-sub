@@ -545,12 +545,8 @@ Deno.serve(async (req) => {
             if (dataSizeGB >= 1) {
               await processReferralBonus(supabase, userId);
             }
-          } else if (serviceType === 'airtime') {
-            const cashback = calculateCashback('airtime', amount);
-            if (cashback > 0) {
-              await addCashback(supabase, userId, cashback, 'airtime', description);
-            }
           }
+          // Airtime cashback disabled
 
           return new Response(JSON.stringify({
             success: true,

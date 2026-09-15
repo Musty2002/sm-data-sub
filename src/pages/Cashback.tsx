@@ -221,10 +221,6 @@ export default function Cashback() {
               <span className="text-muted-foreground">Data Purchase</span>
               <span className="font-medium text-green-600">₦{cashbackConfig.data_rate} per {cashbackConfig.data_unit}</span>
             </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Airtime Purchase</span>
-              <span className="font-medium text-green-600">₦{cashbackConfig.airtime_rate} per ₦{cashbackConfig.airtime_unit}</span>
-            </div>
           </div>
         </div>
 
