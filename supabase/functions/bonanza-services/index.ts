@@ -360,6 +360,7 @@ Deno.serve(async (req) => {
         };
         if (status === 'completed') {
           await completePurchase(supabase, purchaseTransactionId, providerRef, resultMetadata);
+          await awardCashback(supabase, userId, 'data', amount, body.plan_name, description);
         } else {
           await markPurchasePending(supabase, purchaseTransactionId, resultMetadata);
         }
