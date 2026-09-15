@@ -416,7 +416,7 @@ Deno.serve(async (req) => {
         };
         if (status === 'completed') {
           await completePurchase(supabase, purchaseTransactionId, providerRef, airtimeMetadata);
-          await awardCashback(supabase, userId, 'airtime', amount, undefined, description);
+          // Airtime cashback disabled
         } else {
           await markPurchasePending(supabase, purchaseTransactionId, airtimeMetadata);
         }
