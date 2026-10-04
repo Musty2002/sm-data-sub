@@ -26,7 +26,9 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const aspfiyKey = Deno.env.get("ASPFIY_SECRET_KEY")!;
+    const paymentPointApiKey = Deno.env.get("PAYMENTPOINT_API_KEY")!;
+    const paymentPointApiSecret = Deno.env.get("PAYMENTPOINT_API_SECRET")!;
+    const paymentPointBusinessId = Deno.env.get("PAYMENTPOINT_BUSINESS_ID")!;
 
     // Admin auth
     const authHeader = req.headers.get("Authorization");
@@ -48,17 +50,12 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const targetUserId: string | undefined = body.userId;
     const newPhone: string | undefined = body.phone;
-    if (!targetUserId || !newPhone) return json({ error: "Missing userId or phone" }, 400);
-
-    const phone = sanitizePhone(newPhone);
-    if (!/^\d{11}$/.test(phone) || !/^0[789]/.test(phone)) {
-      return json({ error: "Invalid phone number. Must be 11-digit Nigerian mobile (e.g. 08012345678)" }, 400);
-    }
+    if (!targetUserId) return json({ error: "Missing userId" }, 400);
 
     // Load profile
     const { data: profile, error: pErr } = await supabase
       .from("profiles")
-      .select("user_id, full_name, email")
+      .select("user_id, full_name, email, phone")
       .eq("user_id", targetUserId)
       .maybeSingle();
     if (pErr || !profile) return json({ error: "User not found" }, 404);
@@ -66,43 +63,59 @@ Deno.serve(async (req) => {
     const email = (profile.email || "").trim().toLowerCase();
     if (!email) return json({ error: "User has no email on file" }, 400);
 
-    // Update phone first
-    const { error: phoneErr } = await supabase
-      .from("profiles")
-      .update({ phone })
-      .eq("user_id", targetUserId);
-    if (phoneErr) return json({ error: "Failed to update phone", details: phoneErr.message }, 500);
+    // Use provided phone, or fall back to the profile's existing phone
+    let phone = sanitizePhone(newPhone || profile.phone || "");
+    if (!/^\d{11}$/.test(phone) || !/^0[789]/.test(phone)) {
+      return json({ error: "Invalid phone number. Must be 11-digit Nigerian mobile (e.g. 08012345678)" }, 400);
+    }
 
-    // Reserve Aspfiy Paga account
-    const nameParts = (profile.full_name || "User").trim().split(/\s+/);
-    const firstName = nameParts[0] || "User";
-    const lastName = nameParts.slice(1).join(" ") || firstName;
-    const webhookUrl = `${supabaseUrl}/functions/v1/aspfiy-webhook`;
+    // Update phone if a new one was provided
+    if (newPhone) {
+      const { error: phoneErr } = await supabase
+        .from("profiles")
+        .update({ phone })
+        .eq("user_id", targetUserId);
+      if (phoneErr) return json({ error: "Failed to update phone", details: phoneErr.message }, 500);
+    }
 
-    const resp = await fetch("https://api-v1.aspfiy.com/reserve-paga/", {
+    const name = (profile.full_name || "User").trim();
+
+    // Create PaymentPoint (PalmPay) virtual account
+    const ppResp = await fetch("https://api.paymentpoint.co/api/v1/createVirtualAccount", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${aspfiyKey}`,
+        Authorization: `Bearer ${paymentPointApiSecret}`,
+        "api-key": paymentPointApiKey,
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ email, reference: targetUserId, firstName, lastName, webhookUrl, phone }),
+      body: JSON.stringify({
+        email,
+        name,
+        phoneNumber: phone,
+        bankCode: ["20946"], // PalmPay
+        businessId: paymentPointBusinessId,
+      }),
     });
-    const txt = await resp.text();
-    let data: any = {};
-    try { data = JSON.parse(txt); } catch {}
+    const rawText = await ppResp.text();
+    let ppData: any = {};
+    try { ppData = JSON.parse(rawText); } catch {}
 
-    if (!resp.ok || data?.status === false) {
-      return json({ error: "Aspfiy rejected request", details: data || txt }, 400);
+    if (!ppResp.ok || ppData?.status === "failed" || ppData?.status === false) {
+      return json({ error: "PaymentPoint rejected request", details: ppData || rawText }, 400);
     }
 
-    const acct = data?.data?.account || data?.data || data?.account || data || {};
-    const accountNumber = acct.account_number || acct.accountNumber || acct.accountNo || null;
-    const accountName = acct.account_name || acct.accountName || `${firstName} ${lastName}`.trim();
-    const bankName = acct.bank_name || acct.bankName || "Paga";
+    const bankAccounts: any[] = ppData?.bankAccounts || ppData?.data?.bankAccounts || [];
+    const palm = bankAccounts.find((a) =>
+      (a?.bankName || a?.bank_name || "").toLowerCase().includes("palmpay")
+    ) || bankAccounts[0] || {};
+
+    const accountNumber = palm.accountNumber || palm.account_number || null;
+    const accountName = palm.accountName || palm.account_name || name;
+    const bankName = palm.bankName || palm.bank_name || "PalmPay";
 
     if (!accountNumber) {
-      return json({ error: "No account returned by provider", details: data }, 400);
+      return json({ error: "No account returned by provider", details: ppData }, 400);
     }
 
     const { error: upErr } = await supabase
@@ -111,7 +124,7 @@ Deno.serve(async (req) => {
       .eq("user_id", targetUserId);
     if (upErr) return json({ error: "Failed to save account", details: upErr.message }, 500);
 
-    return json({ success: true, phone, accountNumber, accountName });
+    return json({ success: true, phone, accountNumber, accountName, bankName });
   } catch (e: any) {
     console.error("admin-fix-user-account error:", e);
     return json({ error: e?.message || "Unknown error" }, 500);
