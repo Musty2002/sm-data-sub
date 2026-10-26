@@ -7,8 +7,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useVirtualAccounts, VirtualAccount } from '@/hooks/useVirtualAccounts';
 import { PalmPayNinDialog } from './PalmPayNinDialog';
 import walletArt from '@/assets/wallet-3d.png';
-import pagaLogo from '@/assets/banks/paga-logo.png.asset.json';
-import palmpayLogo from '@/assets/banks/palmpay-logo.png.asset.json';
+import pagaLogo from '@/assets/banks/paga-logo.png';
+import palmpayLogo from '@/assets/banks/palmpay-logo.png';
 
 export function AccountCard() {
   const { profile, wallet, user, refreshWallet, refreshCashbackWallet, refreshProfile } = useAuth();
@@ -196,7 +196,7 @@ export function AccountCard() {
 export function BankLogo({ tone, className = 'w-10 h-10' }: { tone: 'paga' | 'palmpay'; className?: string }) {
   return (
     <img
-      src={tone === 'paga' ? pagaLogo.url : palmpayLogo.url}
+      src={tone === 'paga' ? pagaLogo : palmpayLogo}
       alt={tone === 'paga' ? 'Paga' : 'PalmPay'}
       className={`${className} rounded-full shrink-0 object-cover bg-card border border-border/60`}
     />
@@ -207,19 +207,21 @@ function AccountTile({ acc, label, tone, onCopy }: { acc: VirtualAccount; label:
   return (
     <button
       onClick={onCopy}
-      className={`rounded-xl border border-border/60 border-l-4 p-2.5 text-left flex items-center gap-2 active:scale-[0.98] transition ${
+      className={`rounded-xl border border-border/60 border-l-4 p-2.5 text-left active:scale-[0.98] transition ${
         tone === 'paga' ? 'border-l-paga' : 'border-l-palmpay'
       }`}
     >
-      <BankLogo tone={tone} />
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-bold text-foreground leading-tight">{label}</p>
-        <p className="text-[9px] text-muted-foreground leading-tight">Wallet Account</p>
-        <div className="flex items-center justify-between gap-1">
-          <p className="text-[11px] font-extrabold text-foreground tabular-nums tracking-tight truncate">{acc.account_number}</p>
-          <Copy className="w-3 h-3 text-secondary shrink-0" />
+      <div className="flex items-center gap-2">
+        <BankLogo tone={tone} className="w-8 h-8" />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-bold text-foreground leading-tight">{label}</p>
+          <p className="text-[9px] text-muted-foreground leading-tight">Wallet Account</p>
         </div>
+        <Copy className="w-3.5 h-3.5 text-secondary shrink-0" />
       </div>
+      <p className="mt-1.5 w-full text-[15px] font-extrabold text-foreground tabular-nums tracking-tight whitespace-nowrap leading-none">
+        {acc.account_number}
+      </p>
     </button>
   );
 }
