@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { MobileLayout } from '@/components/layout/MobileLayout';
 import { AccountCard } from '@/components/dashboard/AccountCard';
 import { ServicesGrid } from '@/components/dashboard/ServicesGrid';
+import { RewardsOffers } from '@/components/dashboard/RewardsOffers';
 import { RecentTransactions } from '@/components/dashboard/RecentTransactions';
 import { PromoPopup } from '@/components/PromoPopup';
 import { TransactionPinDialog, usePinStatus } from '@/components/auth/PinSetupDialog';
@@ -126,30 +127,33 @@ export default function Dashboard() {
         </div>
 
         {/* Header */}
-        <div className="flex items-center justify-between px-4 md:px-6 py-4">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between px-4 md:px-6 py-3">
+          <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={() => navigate('/services')}
-              className="w-9 h-9 flex items-center justify-center -ml-1"
+              className="w-9 h-9 flex items-center justify-center -ml-1 shrink-0"
               aria-label="Menu"
             >
-              <Menu className="w-6 h-6 text-foreground" />
+              <Menu className="w-6 h-6 text-secondary" />
             </button>
-            <img src={logo} alt="SM Data Sub" className="h-9 w-9 rounded-full object-cover border-2 border-primary" />
-            <h1 className="text-base font-extrabold text-secondary tracking-tight">SM DATA SUB</h1>
+            <img src={logo} alt="SM Data Sub" className="h-11 w-11 rounded-full object-cover border-2 border-primary shrink-0" />
+            <div className="min-w-0">
+              <h1 className="text-lg font-extrabold text-secondary tracking-tight leading-none">SM DATA SUB</h1>
+              <p className="text-[10px] font-semibold text-muted-foreground leading-tight mt-0.5">Fast • Secure • Reliable</p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => navigate('/notifications')}
               className="relative w-10 h-10 flex items-center justify-center"
               aria-label="Notifications"
             >
-              <Bell className="w-6 h-6 text-foreground" />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-primary rounded-full ring-2 ring-background"></span>
+              <Bell className="w-6 h-6 text-secondary" />
+              <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-primary rounded-full ring-2 ring-background"></span>
             </button>
             <button
               onClick={() => navigate('/profile')}
-              className="w-9 h-9 rounded-full bg-muted overflow-hidden border-2 border-secondary/30"
+              className="w-10 h-10 rounded-full bg-muted overflow-hidden border-2 border-secondary/30"
               aria-label="Profile"
             >
               {profile?.avatar_url ? (
@@ -163,11 +167,14 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Account Card */}
+        {/* Balance + My Accounts */}
         <AccountCard />
 
         {/* Services Grid */}
         <ServicesGrid />
+
+        {/* Rewards & Offers */}
+        <RewardsOffers />
 
         {/* Recent Transactions */}
         <RecentTransactions />
