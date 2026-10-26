@@ -66,6 +66,12 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({})) as Partial<CreateVirtualAccountRequest>;
     const { userId, email: requestedEmail, name: requestedName, phoneNumber: rawPhone } = body;
     const force = (body as any).force === true;
+    // Default to Paga (no NIN) so older app builds still auto-provision.
+    const provider: "paga" | "palmpay" = (body as any).provider === "palmpay" ? "palmpay" : "paga";
+    const nin = typeof (body as any).nin === "string" ? (body as any).nin.trim() : "";
+    if (provider === "palmpay" && !/^\d{11}$/.test(nin)) {
+      return jsonResponse({ error: "NIN required", details: { message: "Please enter your 11-digit NIN to get a PalmPay account" } }, 400);
+    }
 
     if (!userId) {
       return jsonResponse({ error: "Missing user ID" }, 400);
@@ -112,15 +118,22 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "Failed to check profile", details: profileLookupError }, 500);
     }
 
-    const hasPalmPay =
-      (existingProfile?.virtual_account_bank || "").toLowerCase().includes("palmpay");
-
-    if (!force && hasPalmPay && existingProfile?.virtual_account_name && existingProfile?.account_number) {
+    // Each user can hold one Paga and one PalmPay account. Never re-issue an existing one.
+    const { data: mine } = await supabase
+      .from("virtual_accounts")
+      .select("account_number, account_name, bank_name")
+      .eq("user_id", userId)
+      .eq("provider", provider)
+      .maybeSingle();
+    void force;
+    if (mine?.account_number) {
       return jsonResponse({
         success: true,
         alreadyExists: true,
-        accountNumber: existingProfile.account_number,
-        accountName: existingProfile.virtual_account_name,
+        accountNumber: mine.account_number,
+        accountName: mine.account_name,
+        bankName: mine.bank_name,
+        provider,
       });
     }
 
@@ -189,9 +202,58 @@ Deno.serve(async (req) => {
       await supabase.from("user_roles").insert({ user_id: userId, role: "user" });
     }
 
-    console.log(`Creating PaymentPoint (PalmPay) virtual account for user: ${userId}, email: ${email}, phone: ${phoneNumber}`);
+    // Save an account row; mirror into the profile only when the profile has no
+    // funding account yet or already holds this provider (keeps legacy app builds working).
+    const saveAccount = async (accNo: string, accName: string, bank: string) => {
+      const { error: vaErr } = await supabase.from("virtual_accounts").upsert(
+        { user_id: userId, provider, bank_name: bank, account_number: accNo, account_name: accName },
+        { onConflict: "user_id,provider" },
+      );
+      if (vaErr) console.error("Failed to save virtual account row:", vaErr);
+      const profileBank = (existingProfile?.virtual_account_bank || "").toLowerCase();
+      const profileEmpty = !existingProfile?.virtual_account_name;
+      const sameProvider = provider === "palmpay" ? profileBank.includes("palmpay") : !profileBank.includes("palmpay");
+      if (profileEmpty || sameProvider) {
+        await supabase.from("profiles")
+          .update({ account_number: accNo, virtual_account_name: accName, virtual_account_bank: bank })
+          .eq("user_id", userId);
+      }
+      return vaErr;
+    };
 
-    // Call PaymentPoint createVirtualAccount API (issues a PalmPay account)
+    if (provider === "paga") {
+      const aspfiyKey = Deno.env.get("ASPFIY_SECRET_KEY");
+      if (!aspfiyKey) return jsonResponse({ error: "Failed to create virtual account", details: { message: "Paga accounts are not configured" } }, 400);
+      const parts = name.split(/\s+/);
+      const firstName = parts[0] || "User";
+      const lastName = parts.slice(1).join(" ") || firstName;
+      const reservePaga = (reference: string) => fetch("https://api-v1.aspfiy.com/reserve-paga/", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${aspfiyKey}`, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ email, reference, firstName, lastName, phone: phoneNumber, webhookUrl: `${supabaseUrl}/functions/v1/aspfiy-webhook` }),
+      });
+      let aResp = await reservePaga(userId);
+      let aText = await aResp.text();
+      let aData: any = {};
+      try { aData = JSON.parse(aText); } catch { /* raw */ }
+      if (/already exist/i.test(String(aData?.message || aText))) {
+        aResp = await reservePaga(`${userId}-${Date.now()}`);
+        aText = await aResp.text();
+        aData = {};
+        try { aData = JSON.parse(aText); } catch { /* raw */ }
+      }
+      console.log(`Aspfiy status=${aResp.status}, body=`, aText);
+      const acct = aData?.data?.account || aData?.data || aData?.account || aData || {};
+      const accNo = acct.account_number || acct.accountNumber || acct.accountNo || null;
+      if (!aResp.ok || !accNo) {
+        return jsonResponse({ error: "Failed to create virtual account", details: { message: aData?.message || "Paga did not return an account number" } }, 400);
+      }
+      const accName = acct.account_name || acct.accountName || name;
+      await saveAccount(String(accNo), accName, "Paga");
+      return jsonResponse({ success: true, accountNumber: accNo, accountName: accName, bankName: "Paga", provider });
+    }
+
+    console.log(`Creating PaymentPoint (PalmPay) virtual account for user: ${userId}`);
     const ppResp = await fetch("https://api.paymentpoint.co/api/v1/createVirtualAccount", {
       method: "POST",
       headers: {
@@ -206,6 +268,7 @@ Deno.serve(async (req) => {
         phoneNumber,
         bankCode: ["20946"], // PalmPay
         businessId: paymentPointBusinessId,
+        ...(nin ? { idType: "nin", idNumber: nin } : {}),
       }),
     });
     const rawText = await ppResp.text();
@@ -214,10 +277,9 @@ Deno.serve(async (req) => {
     console.log(`PaymentPoint status=${ppResp.status}, body=`, rawText);
 
     if (!ppResp.ok || ppData?.status === "failed" || ppData?.status === false) {
-      return jsonResponse({ error: "Failed to create virtual account", details: ppData || rawText }, 400);
+      return jsonResponse({ error: "Failed to create virtual account", details: { message: ppData?.message || "PalmPay request was rejected" } }, 400);
     }
 
-    // Prefer PalmPay from bankAccounts, fall back to first item
     const bankAccounts: any[] = ppData?.bankAccounts || ppData?.data?.bankAccounts || [];
     const palm = bankAccounts.find((a) =>
       (a?.bankName || a?.bank_name || "").toLowerCase().includes("palmpay")
@@ -228,38 +290,17 @@ Deno.serve(async (req) => {
     const bankName = palm.bankName || palm.bank_name || "PalmPay";
 
     if (!accountNumber) {
-      console.warn("Aspfiy did not return an account number in the response. Awaiting webhook.");
-      return jsonResponse({
-        success: true,
-        pending: true,
-        message: "Account reservation in progress. It will be available shortly.",
-      });
+      return jsonResponse({ error: "Failed to create virtual account", details: { message: ppData?.message || "PalmPay did not return an account number" } }, 400);
     }
 
-    const { error: updateError } = await supabase
-      .from("profiles")
-      .update({
-        account_number: accountNumber,
-        virtual_account_name: accountName,
-        virtual_account_bank: bankName,
-      })
-      .eq("user_id", userId);
-
-    if (updateError) {
-      console.error("Error updating profile:", updateError);
-      return new Response(
-        JSON.stringify({ error: "Failed to update profile", details: updateError }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    console.log(`Successfully created Aspfiy virtual account: ${accountNumber} for user: ${userId}`);
+    await saveAccount(String(accountNumber), accountName, bankName);
 
     return jsonResponse({
       success: true,
       accountNumber,
       bankName,
       accountName,
+      provider,
     });
 
   } catch (error: unknown) {

@@ -218,25 +218,40 @@ ${transaction.type === 'data' && transaction.dataPlan ? `📦 Data Plan: ${trans
         <div className="overflow-y-auto h-full pb-6 px-4">
           {!showDetails ? (
             <>
-              {/* Opay-style success summary */}
-              <div className="flex flex-col items-center text-center pt-2 pb-6">
-                <div className={`w-16 h-16 rounded-full ${statusColor} flex items-center justify-center shadow-lg mb-4`}>
-                  <StatusIconTop className="w-9 h-9 text-white" strokeWidth={2.5} />
+              {/* Success summary */}
+              <div className="flex flex-col items-center text-center pt-4 pb-6">
+                <div className="relative w-40 h-36 flex items-center justify-center mb-3">
+                  {isSuccess && (
+                    <>
+                      <span className="absolute left-3 top-6 w-6 h-1.5 rounded-full bg-success rotate-[30deg]" />
+                      <span className="absolute left-0 top-[60px] w-7 h-1.5 rounded-full bg-success" />
+                      <span className="absolute left-4 bottom-8 w-6 h-1.5 rounded-full bg-secondary -rotate-[30deg]" />
+                      <span className="absolute right-3 top-6 w-6 h-1.5 rounded-full bg-secondary -rotate-[30deg]" />
+                      <span className="absolute right-0 top-[60px] w-7 h-1.5 rounded-full bg-success" />
+                      <span className="absolute right-4 bottom-8 w-6 h-1.5 rounded-full bg-success rotate-[30deg]" />
+                    </>
+                  )}
+                  <div className={`w-28 h-28 rounded-full ring-8 ring-card shadow-xl flex items-center justify-center ${isSuccess ? 'bg-success' : isFailed ? 'bg-destructive' : 'bg-warning'}`}>
+                    <StatusIconTop className="w-14 h-14 text-primary-foreground" strokeWidth={2.5} />
+                  </div>
                 </div>
-                <h2 className="text-xl font-semibold text-gray-800 mb-2">{statusTitle}</h2>
-                <p className="text-3xl font-bold text-gray-900">
-                  ₦{transaction.amount.toLocaleString()}.00
+                <h2 className="text-2xl font-extrabold text-foreground">{statusTitle}</h2>
+                <p className="text-sm font-semibold text-muted-foreground mt-1">
+                  ₦{Number(transaction.amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}
                 </p>
               </div>
 
               {/* Info banner */}
-              <div className="bg-white rounded-2xl px-5 py-4 mb-4 shadow-sm">
-                <p className="text-center text-sm text-gray-600 leading-relaxed">
-                  {isSuccess
-                    ? `Your ${transaction.type === 'data' ? (transaction.dataPlan || 'data bundle') : 'airtime'} has been delivered to ${transaction.phoneNumber} successfully.`
-                    : isFailed
-                      ? 'This transaction did not go through. If your wallet was debited, it has been refunded automatically.'
-                      : 'This transaction is being processed. You will be notified once it is complete.'}
+              <div className={`rounded-2xl px-4 py-4 mb-5 shadow-sm flex items-center gap-3 ${isSuccess ? 'bg-success/10' : isFailed ? 'bg-destructive/10' : 'bg-warning/10'}`}>
+                <div className={`w-10 h-10 rounded-full shrink-0 flex items-center justify-center ${isSuccess ? 'bg-success' : isFailed ? 'bg-destructive' : 'bg-warning'}`}>
+                  <StatusIconTop className="w-5 h-5 text-primary-foreground" strokeWidth={3} />
+                </div>
+                <p className="text-sm text-foreground leading-relaxed border-l border-border pl-3">
+                  {isSuccess ? (
+                    <>Your <b>{transaction.type === 'data' ? (transaction.dataPlan || 'data bundle') : `₦${Number(transaction.amount).toLocaleString()} airtime`}</b> has been delivered to <b>{transaction.phoneNumber}</b> successfully.</>
+                  ) : isFailed
+                    ? 'This transaction did not go through. If your wallet was debited, it has been refunded automatically.'
+                    : 'This transaction is being processed. You will be notified once it is complete.'}
                 </p>
               </div>
 

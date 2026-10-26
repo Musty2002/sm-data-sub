@@ -95,12 +95,22 @@ Deno.serve(async (req) => {
 
     console.log(`Processing payment: ${amountPaid} to account ${receiverAccountNumber}, txn: ${transactionId}`);
 
-    // Find the user profile by account number (use maybeSingle to avoid PGRST116 throws)
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("user_id, full_name")
+    // Find the user by account number: virtual_accounts first, then legacy profile column
+    let profile: { user_id: string; full_name: string } | null = null;
+    let profileError: unknown = null;
+    const { data: va } = await supabase
+      .from("virtual_accounts")
+      .select("user_id")
       .eq("account_number", receiverAccountNumber)
       .maybeSingle();
+    if (va?.user_id) {
+      const r = await supabase.from("profiles").select("user_id, full_name").eq("user_id", va.user_id).maybeSingle();
+      profile = r.data as any; profileError = r.error;
+    }
+    if (!profile) {
+      const r = await supabase.from("profiles").select("user_id, full_name").eq("account_number", receiverAccountNumber).maybeSingle();
+      profile = r.data as any; profileError = r.error;
+    }
 
     if (profileError || !profile) {
       console.error("Profile not found for account:", receiverAccountNumber, profileError);

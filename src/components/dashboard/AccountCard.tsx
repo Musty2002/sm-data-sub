@@ -1,379 +1,225 @@
 import { useState, useEffect } from 'react';
-import { Eye, EyeOff, Copy, Plus, History, RefreshCw, Gift, ArrowDownToLine, Bell, User as UserIcon, Building2, CreditCard, Users, Headphones, ChevronRight } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Eye, EyeOff, Copy, Plus, Clock, Bell, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { useVirtualAccounts, VirtualAccount } from '@/hooks/useVirtualAccounts';
+import { PalmPayNinDialog } from './PalmPayNinDialog';
 import walletArt from '@/assets/wallet-3d.png';
 
 export function AccountCard() {
-  const { profile, wallet, cashbackWallet, user, refreshWallet, refreshProfile, refreshCashbackWallet } = useAuth();
+  const { profile, wallet, user, refreshWallet, refreshCashbackWallet, refreshProfile } = useAuth();
+  const { paga, palmpay, loaded, refresh } = useVirtualAccounts();
   const [showBalance, setShowBalance] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string>('just now');
-  const [isRetrying, setIsRetrying] = useState(false);
-  const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [ninOpen, setNinOpen] = useState(false);
+  const [retryingPaga, setRetryingPaga] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  // Real-time wallet balance subscription
   useEffect(() => {
     if (!user?.id) return;
-
     const walletChannel = supabase
       .channel('wallet-balance-updates')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'wallets',
-          filter: `user_id=eq.${user.id}`,
-        },
-        (payload) => {
-          console.log('Wallet updated:', payload);
-          refreshWallet();
-          setLastUpdated('just now');
-          toast({
-            title: 'Balance Updated',
-            description: 'Your wallet balance has been updated.',
-          });
-        }
-      )
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'wallets', filter: `user_id=eq.${user.id}` }, () => {
+        refreshWallet();
+        setLastUpdated('just now');
+        toast({ title: 'Balance Updated', description: 'Your wallet balance has been updated.' });
+      })
       .subscribe();
-
     const cashbackChannel = supabase
       .channel('cashback-wallet-updates')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'cashback_wallets',
-          filter: `user_id=eq.${user.id}`,
-        },
-        (payload) => {
-          console.log('Cashback wallet updated:', payload);
-          refreshCashbackWallet();
-        }
-      )
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'cashback_wallets', filter: `user_id=eq.${user.id}` }, () => refreshCashbackWallet())
       .subscribe();
-
     return () => {
       supabase.removeChannel(walletChannel);
       supabase.removeChannel(cashbackChannel);
     };
   }, [user?.id, refreshWallet, refreshCashbackWallet, toast]);
 
-  // Update "last updated" time
   useEffect(() => {
     const interval = setInterval(() => {
       setLastUpdated((prev) => {
         if (prev === 'just now') return '1 min ago';
         const match = prev.match(/(\d+)/);
-        if (match) {
-          const mins = parseInt(match[1]) + 1;
-          return `${mins} min ago`;
-        }
-        return prev;
+        return match ? `${parseInt(match[1]) + 1} min ago` : prev;
       });
     }, 60000);
-
     return () => clearInterval(interval);
   }, []);
 
-  const copyAccountNumber = () => {
-    if (profile?.account_number) {
-      navigator.clipboard.writeText(profile.account_number);
-      toast({
-        title: 'Copied!',
-        description: 'Account number copied to clipboard',
-      });
-    }
+  const formatBalance = (balance: number) =>
+    new Intl.NumberFormat('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(balance);
+
+  const copy = (acc: VirtualAccount) => {
+    navigator.clipboard.writeText(acc.account_number);
+    toast({ title: 'Copied!', description: `${acc.provider === 'paga' ? 'Paga' : 'PalmPay'} account number copied` });
   };
 
-  const formatBalance = (balance: number) => {
-    return new Intl.NumberFormat('en-NG', {
-      style: 'currency',
-      currency: 'NGN',
-      minimumFractionDigits: 2,
-    }).format(balance);
-  };
+  const isAccountReady = !!profile?.virtual_account_name || !!paga || !!palmpay;
 
-  const hasVirtualAccount = profile?.account_number && profile.account_number.length === 10;
-  const isAccountReady = hasVirtualAccount && profile?.virtual_account_name;
-  const storedBank = profile?.virtual_account_bank || "";
-  const bankName = (() => {
-    if (storedBank.toLowerCase().includes("palmpay")) return "PalmPay";
-    if (storedBank.toLowerCase().includes("aspfiy") || storedBank.toLowerCase().includes("paga")) return "PalmPay";
-    return storedBank || "PalmPay";
-  })();
-  const accountName = profile?.virtual_account_name || profile?.full_name || "User";
-
-  const canWithdrawCashback = (cashbackWallet?.balance || 0) >= 100;
-
-  const retryVirtualAccountCreation = async () => {
-    console.log('[AccountCard] retryVirtualAccountCreation called, user:', !!user, 'profile:', !!profile);
-    if (!user || !profile) {
-      console.error('[AccountCard] Missing user or profile, cannot retry');
-      toast({
-        title: 'Error',
-        description: 'Please log in first.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    
-    setIsRetrying(true);
+  const retryPaga = async () => {
+    if (!user || !profile) return;
+    setRetryingPaga(true);
     try {
-      // Sanitize phone number
-      let phone = (profile.phone || "").replace(/[\s\-()]/g, "");
-      if (phone.startsWith("+234")) {
-        phone = "0" + phone.slice(4);
-      } else if (phone.startsWith("234") && phone.length === 13) {
-        phone = "0" + phone.slice(3);
-      }
-
+      let phone = (profile.phone || '').replace(/[\s\-()]/g, '');
+      if (phone.startsWith('+234')) phone = '0' + phone.slice(4);
+      else if (phone.startsWith('234') && phone.length === 13) phone = '0' + phone.slice(3);
       const { data, error } = await supabase.functions.invoke('create-virtual-account', {
-        body: {
-          userId: user.id,
-          email: profile.email || user.email,
-          name: profile.full_name,
-          phoneNumber: phone,
-        }
+        body: { userId: user.id, email: profile.email || user.email, name: profile.full_name, phoneNumber: phone, provider: 'paga' },
       });
-
-      if (error) {
-        throw error;
-      }
-
-      toast({
-        title: 'Account Created!',
-        description: 'Your virtual account has been set up successfully.',
-      });
-
-      // Refresh profile to get the new account details
+      if (error || !data?.success) throw new Error(data?.details?.message || 'Please try again later.');
       await refreshProfile();
-    } catch (error: any) {
-      console.error('Error creating virtual account:', error);
-      toast({
-        title: 'Failed to create account',
-        description: error.message || 'Please try again later.',
-        variant: 'destructive',
-      });
+      await refresh();
+    } catch (e: any) {
+      toast({ title: 'Could not create Paga account', description: e?.message, variant: 'destructive' });
     } finally {
-      setIsRetrying(false);
-    }
-  };
-
-  const handleWithdrawCashback = async () => {
-    if (!canWithdrawCashback) {
-      toast({
-        title: 'Cannot Withdraw',
-        description: 'Minimum cashback withdrawal is ₦100',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setIsWithdrawing(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('withdraw-cashback');
-
-      if (error) throw error;
-
-      if (data.success) {
-        toast({
-          title: 'Cashback Withdrawn!',
-          description: data.message,
-        });
-        refreshWallet();
-        refreshCashbackWallet();
-      } else {
-        throw new Error(data.message);
-      }
-    } catch (error: any) {
-      console.error('Error withdrawing cashback:', error);
-      toast({
-        title: 'Withdrawal Failed',
-        description: error.message || 'Please try again later.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsWithdrawing(false);
+      setRetryingPaga(false);
     }
   };
 
   return (
     <div className="space-y-3 mx-4 md:mx-6">
-      {/* Main Wallet Card */}
-      <div className="relative overflow-hidden rounded-3xl p-5 md:p-6 text-primary-foreground shadow-xl"
-        style={{ background: 'linear-gradient(135deg, hsl(4 82% 55%) 0%, hsl(4 75% 45%) 100%)' }}>
-        {/* Glow accents */}
-        <div className="pointer-events-none absolute -top-10 -right-10 w-48 h-48 rounded-full bg-white/10 blur-2xl" />
-        <div className="pointer-events-none absolute -bottom-16 -left-10 w-56 h-56 rounded-full bg-black/10 blur-3xl" />
+      {/* Balance Card */}
+      <div
+        className="relative overflow-hidden rounded-3xl p-4 text-secondary-foreground shadow-xl"
+        style={{ background: 'var(--gradient-balance)' }}
+      >
+        {/* Red diagonal ribbon */}
+        <div className="pointer-events-none absolute -right-10 -top-6 w-32 h-[140%] rotate-[25deg] bg-primary/90" />
+        <div className="pointer-events-none absolute -right-2 -top-6 w-6 h-[140%] rotate-[25deg] bg-warning/80" />
 
-        <div className="relative flex gap-3">
+        <div className="relative flex gap-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              <p className="text-sm font-medium opacity-95">Available Balance</p>
+              <p className="text-sm font-semibold">Available Balance</p>
               <button
                 onClick={() => setShowBalance(!showBalance)}
-                className="w-6 h-6 rounded-full bg-secondary/90 flex items-center justify-center"
+                className="w-6 h-6 rounded-full bg-background/20 flex items-center justify-center"
                 aria-label="Toggle balance visibility"
               >
                 {showBalance ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
               </button>
             </div>
-            <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight mb-2 leading-none">
-              {showBalance ? formatBalance(wallet?.balance || 0) : '₦ ****'}
+            <h2 className="text-4xl font-extrabold tracking-tight leading-none mb-2 tabular-nums">
+              {showBalance ? formatBalance(wallet?.balance || 0) : '****'}
             </h2>
-            <p className="text-sm font-semibold leading-tight">Welcome {(profile?.full_name || 'User').split(' ')[0]},</p>
-            <p className="text-[10px] opacity-80 mb-2">All services are going smoothly</p>
-
-            <div className="inline-flex items-center gap-1 bg-secondary/95 rounded-full px-2 py-0.5 text-[10px] font-medium shadow">
-              <Bell className="w-2.5 h-2.5" />
-              <span>Balance updated: {lastUpdated}</span>
-            </div>
+            <p className="text-base font-bold leading-tight">Welcome {(profile?.full_name || 'User').split(' ')[0]},</p>
+            <p className="text-[11px] opacity-90">All services are going smoothly</p>
           </div>
+          <img
+            src={walletArt}
+            alt=""
+            width={120}
+            height={120}
+            loading="lazy"
+            className="relative w-24 h-24 object-contain drop-shadow-2xl shrink-0"
+          />
+        </div>
 
-          <div className="flex flex-col items-end justify-between shrink-0">
-            <img
-              src={walletArt}
-              alt="Wallet"
-              width={120}
-              height={120}
-              loading="lazy"
-              className="w-20 h-20 md:w-24 md:h-24 object-contain drop-shadow-xl -mt-1 -mr-1"
-            />
+        <div className="relative mt-3 flex items-center gap-1.5">
+          <div className="flex-1 min-w-0 inline-flex items-center gap-1 bg-primary rounded-full px-2.5 py-1.5 text-[10px] font-semibold shadow">
+            <Bell className="w-3 h-3 shrink-0" />
+            <span className="truncate">Balance updated: {lastUpdated}</span>
+          </div>
+          <button
+            onClick={() => navigate('/history')}
+            className="inline-flex items-center gap-1 bg-card text-foreground font-bold text-xs rounded-full px-3 py-1.5 shadow active:scale-95 transition"
+          >
+            <Clock className="w-3.5 h-3.5 text-secondary" /> History
+          </button>
+          <button
+            onClick={() => navigate('/add-money')}
+            disabled={!isAccountReady}
+            className="inline-flex items-center gap-1 bg-card text-foreground font-bold text-xs rounded-full px-3 py-1.5 shadow active:scale-95 transition disabled:opacity-50"
+          >
+            <Plus className="w-3.5 h-3.5 text-secondary" strokeWidth={3} /> Add Money
+          </button>
+        </div>
+      </div>
+
+      {/* My Accounts */}
+      <div className="bg-card rounded-2xl shadow-sm border border-border/60 p-3">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-base font-extrabold text-foreground">My Accounts</h3>
+          <button onClick={() => navigate('/add-money')} className="text-xs font-semibold text-secondary inline-flex items-center">
+            Manage <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {/* Paga */}
+          {paga ? (
+            <AccountTile acc={paga} label="PAGA" tone="paga" onCopy={() => copy(paga)} />
+          ) : (
             <button
-              onClick={() => navigate('/add-money')}
-              disabled={!isAccountReady}
-              className="mt-2 inline-flex items-center gap-1 bg-white text-secondary font-bold text-xs rounded-full px-3 py-1.5 shadow-md hover:shadow-lg active:scale-95 transition disabled:opacity-50"
+              onClick={retryPaga}
+              disabled={retryingPaga || !loaded}
+              className="rounded-xl border border-border/60 border-l-4 border-l-paga p-2.5 text-left flex items-center gap-2"
             >
-              <Plus className="w-4 h-4" strokeWidth={3} />
-              Add Money
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Account Info Card */}
-      {isAccountReady ? (
-        <button
-          onClick={copyAccountNumber}
-          className="w-full text-left bg-card rounded-2xl shadow-sm border border-border/60 p-3 active:scale-[0.99] transition group"
-        >
-          <div className="flex items-center justify-between gap-3">
-            {/* Bank badge */}
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-secondary to-secondary/80 flex items-center justify-center shadow-sm">
-                <Building2 className="w-4 h-4 text-white" strokeWidth={2.5} />
-              </div>
+              <BankLogo tone="paga" />
               <div className="min-w-0">
-                <p className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground font-semibold leading-none mb-0.5">Fund via</p>
-                <p className="text-sm font-bold text-foreground leading-none">{bankName}</p>
-              </div>
-            </div>
-
-            {/* Account number - hero */}
-            <div className="flex-1 min-w-0 text-right">
-              <p className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground font-semibold leading-none mb-1">Account No</p>
-              <div className="flex items-center justify-end gap-1.5">
-                <p className="text-lg font-extrabold text-foreground tabular-nums tracking-tight leading-none">
-                  {profile?.account_number}
+                <p className="text-xs font-bold text-foreground">PAGA</p>
+                <p className="text-[10px] text-muted-foreground inline-flex items-center gap-1">
+                  {retryingPaga || !loaded ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  {retryingPaga || !loaded ? 'Setting up...' : 'Tap to retry'}
                 </p>
-                <span className="w-6 h-6 rounded-md bg-secondary/10 flex items-center justify-center group-active:bg-secondary/20 transition">
-                  <Copy className="w-3 h-3 text-secondary" strokeWidth={2.5} />
-                </span>
               </div>
-            </div>
-          </div>
-
-          {/* Account name row */}
-          <div className="mt-2.5 pt-2.5 border-t border-dashed border-border/60 flex items-center gap-1.5">
-            <UserIcon className="w-3 h-3 text-muted-foreground shrink-0" />
-            <p className="text-[10px] text-muted-foreground font-medium leading-none shrink-0">Name</p>
-            <p className="text-[11px] font-semibold text-foreground leading-none truncate flex-1 text-right">
-              {accountName}
-            </p>
-          </div>
-        </button>
-      ) : (
-        <div className="bg-card rounded-2xl shadow-sm border border-border/60 p-4 flex items-center justify-between">
-          <span className="text-sm text-muted-foreground">
-            {isRetrying ? 'Creating account...' : 'Account not ready'}
-          </span>
-          <button
-            onClick={retryVirtualAccountCreation}
-            disabled={isRetrying}
-            className="inline-flex items-center gap-1 text-sm font-semibold text-secondary disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${isRetrying ? 'animate-spin' : ''}`} />
-            Retry
-          </button>
-        </div>
-      )}
-
-      {/* Quick Actions */}
-      <div className="bg-card rounded-2xl shadow-sm border border-border/60 p-2 grid grid-cols-3 gap-1">
-        {[
-          { icon: History, label: 'History', path: '/history' },
-          { icon: Users, label: 'Refer & Earn', path: '/referral' },
-          { icon: Headphones, label: 'Customer Service', path: '/support' },
-        ].map(({ icon: Icon, label, path }) => (
-          <button
-            key={path}
-            onClick={() => navigate(path)}
-            className="flex flex-col items-center gap-1 py-1.5 rounded-xl hover:bg-muted/60 transition active:scale-95"
-          >
-            <Icon className="w-5 h-5 text-secondary" strokeWidth={2.2} />
-            <span className="text-[10px] font-semibold text-foreground">{label}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Cashback Wallet Card */}
-      <div className="rounded-2xl p-3 text-white shadow-md"
-        style={{ background: 'linear-gradient(135deg, hsl(215 80% 45%) 0%, hsl(215 72% 38%) 100%)' }}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 bg-white/20 rounded-full flex items-center justify-center">
-              <Gift className="w-4 h-4" />
-            </div>
-            <div>
-              <p className="text-xs font-medium opacity-95">Cashback Balance</p>
-              <p className="text-xl font-extrabold leading-tight">
-                {showBalance ? formatBalance(cashbackWallet?.balance || 0) : '₦ ****'}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={handleWithdrawCashback}
-            disabled={!canWithdrawCashback || isWithdrawing}
-            className="inline-flex items-center gap-1 bg-white text-secondary font-bold text-xs rounded-full px-3 py-1.5 shadow disabled:opacity-50 active:scale-95 transition"
-          >
-            {isWithdrawing ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <>
-                Withdraw
-                <ChevronRight className="w-3.5 h-3.5" />
-              </>
-            )}
-          </button>
-        </div>
-        <div className="mt-2 bg-white/10 rounded-lg px-2.5 py-1.5 space-y-0.5">
-          {!canWithdrawCashback && (cashbackWallet?.balance || 0) > 0 && (
-            <p className="text-[10px] opacity-95">
-              Minimum ₦100 required to withdraw ({formatBalance(100 - (cashbackWallet?.balance || 0))} more needed)
-            </p>
+            </button>
           )}
-          <p className="text-[10px] opacity-90">
-            Earn ₦5/GB on data • ₦2/₦100 on airtime
-          </p>
+
+          {/* PalmPay */}
+          {palmpay ? (
+            <AccountTile acc={palmpay} label="PalmPay" tone="palmpay" onCopy={() => copy(palmpay)} />
+          ) : (
+            <button
+              onClick={() => setNinOpen(true)}
+              className="rounded-xl border border-border/60 border-l-4 border-l-palmpay p-2.5 text-left flex items-center gap-2 active:scale-[0.98] transition"
+            >
+              <BankLogo tone="palmpay" />
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-foreground">PalmPay</p>
+                <p className="text-[10px] font-semibold text-palmpay leading-tight">Generate PalmPay account number</p>
+              </div>
+            </button>
+          )}
         </div>
       </div>
+
+      <PalmPayNinDialog open={ninOpen} onOpenChange={setNinOpen} onCreated={refresh} />
     </div>
+  );
+}
+
+function BankLogo({ tone }: { tone: 'paga' | 'palmpay' }) {
+  return (
+    <div
+      className={`w-10 h-10 rounded-full shrink-0 flex items-center justify-center text-[10px] font-extrabold text-primary-foreground ${
+        tone === 'paga' ? 'bg-paga' : 'bg-palmpay'
+      }`}
+    >
+      {tone === 'paga' ? 'paga' : 'P'}
+    </div>
+  );
+}
+
+function AccountTile({ acc, label, tone, onCopy }: { acc: VirtualAccount; label: string; tone: 'paga' | 'palmpay'; onCopy: () => void }) {
+  return (
+    <button
+      onClick={onCopy}
+      className={`rounded-xl border border-border/60 border-l-4 p-2.5 text-left flex items-center gap-2 active:scale-[0.98] transition ${
+        tone === 'paga' ? 'border-l-paga' : 'border-l-palmpay'
+      }`}
+    >
+      <BankLogo tone={tone} />
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-bold text-foreground leading-tight">{label}</p>
+        <p className="text-[9px] text-muted-foreground leading-tight">Wallet Account</p>
+        <div className="flex items-center justify-between gap-1">
+          <p className="text-sm font-extrabold text-foreground tabular-nums tracking-tight">{acc.account_number}</p>
+          <Copy className="w-3 h-3 text-secondary shrink-0" />
+        </div>
+      </div>
+    </button>
   );
 }

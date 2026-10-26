@@ -124,6 +124,17 @@ Deno.serve(async (req) => {
       if (error) console.error("Account lookup failed:", error);
       if (data) profile = data as any;
     }
+    if (!profile && accountNumber) {
+      const { data: va } = await supabase
+        .from("virtual_accounts")
+        .select("user_id")
+        .eq("account_number", accountNumber)
+        .maybeSingle();
+      if (va?.user_id) {
+        const { data } = await supabase.from("profiles").select("user_id, full_name").eq("user_id", va.user_id).maybeSingle();
+        if (data) profile = data as any;
+      }
+    }
 
     if (!profile) {
       console.error("Profile not found for payload", { merchantRef, accountNumber });
