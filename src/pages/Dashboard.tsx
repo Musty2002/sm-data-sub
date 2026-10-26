@@ -139,7 +139,6 @@ export default function Dashboard() {
             <img src={logo} alt="SM Data Sub" className="h-11 w-11 rounded-full object-cover border-2 border-primary shrink-0" />
             <div className="min-w-0">
               <h1 className="text-lg font-extrabold text-secondary tracking-tight leading-none">SM DATA SUB</h1>
-              <p className="text-[10px] font-semibold text-muted-foreground leading-tight mt-0.5">Fast • Secure • Reliable</p>
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">

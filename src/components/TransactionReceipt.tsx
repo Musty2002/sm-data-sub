@@ -209,9 +209,6 @@ ${transaction.type === 'data' && transaction.dataPlan ? `📦 Data Plan: ${trans
               <ChevronLeft className="w-4 h-4" /> Back
             </button>
           ) : <span className="w-12" />}
-          <button onClick={onClose} className="text-red-600 font-semibold text-base px-2 py-1">
-            Done
-          </button>
         </div>
 
         {/* Scrollable content */}
@@ -478,6 +475,13 @@ ${transaction.type === 'data' && transaction.dataPlan ? `📦 Data Plan: ${trans
             </>
           )}
         </div>
+      </div>
+
+      {/* Bottom Done button */}
+      <div className="shrink-0 px-4 pt-3 pb-6 safe-area-bottom bg-background border-t border-border">
+        <Button onClick={onClose} size="lg" className="w-full font-bold">
+          Done
+        </Button>
       </div>
     </div>
   );

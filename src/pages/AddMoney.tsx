@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useVirtualAccounts, VirtualAccount } from '@/hooks/useVirtualAccounts';
 import { PalmPayNinDialog } from '@/components/dashboard/PalmPayNinDialog';
+import { BankLogo } from '@/components/dashboard/AccountCard';
 
 export default function AddMoney() {
   const navigate = useNavigate();
@@ -100,9 +101,7 @@ export default function AddMoney() {
   const renderAccount = (acc: VirtualAccount, label: string) => (
     <div className="bg-card rounded-2xl p-5 shadow-sm mb-4 space-y-3">
       <div className="flex items-center gap-3">
-        <div className={`w-11 h-11 rounded-full flex items-center justify-center text-primary-foreground text-[10px] font-extrabold ${acc.provider === 'paga' ? 'bg-paga' : 'bg-palmpay'}`}>
-          {acc.provider === 'paga' ? 'paga' : 'P'}
-        </div>
+        <BankLogo tone={acc.provider} className="w-11 h-11" />
         <div>
           <h2 className="font-semibold text-foreground">{label}</h2>
           <p className="text-sm text-muted-foreground">Bank transfer</p>
