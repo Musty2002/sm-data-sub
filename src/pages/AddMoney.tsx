@@ -6,12 +6,18 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useVirtualAccounts, VirtualAccount } from '@/hooks/useVirtualAccounts';
+import { PalmPayNinDialog } from '@/components/dashboard/PalmPayNinDialog';
 
 export default function AddMoney() {
   const navigate = useNavigate();
-  const { profile, user, refreshProfile } = useAuth();
+  const { profile, user, refreshProfile: refreshProfileBase } = useAuth();
   const { toast } = useToast();
   const [isCreatingAccount, setIsCreatingAccount] = useState(false);
+  const [ninOpen, setNinOpen] = useState(false);
+  const { paga, palmpay, refresh } = useVirtualAccounts();
+  const refreshProfile = async () => { await refreshProfileBase(); await refresh(); };
+
   
 
   const copyToClipboard = (text: string, label: string) => {
@@ -51,6 +57,7 @@ export default function AddMoney() {
           name: profile.full_name,
           phoneNumber: phone,
           force,
+          provider: 'paga',
         },
       });
 
