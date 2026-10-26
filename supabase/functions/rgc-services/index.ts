@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { validateUserAccount } from '../_shared/validate-account.ts';
 import { checkRateLimit } from '../_shared/rate-limit.ts';
 import { AmbiguousProviderError, classifyPurchaseFailure } from '../_shared/purchase-safety.ts';
+import { beginPurchase, completePurchase, markPurchasePending, refundPurchase, resolveRequestId } from '../_shared/purchase-lifecycle.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -31,6 +32,7 @@ interface ServiceRequest {
   examid?: number; // product_id for exam
   quantity?: number; // number of pins
   exam_name?: string; // exam name for description
+  request_id?: string;
 }
 
 async function makeRGCRequest(endpoint: string, method: 'GET' | 'POST' = 'GET', body?: object) {
@@ -569,6 +571,10 @@ Deno.serve(async (req) => {
       let result;
       let amount = 0;
       let description = '';
+      let purchaseTransactionId: string | null = null;
+      // True only once money has actually left the wallet. Guards against
+      // refunding an amount that was never deducted (free-purchase exploit).
+      let walletDebited = false;
 
       try {
         if (serviceType === 'airtime') {
@@ -590,6 +596,7 @@ Deno.serve(async (req) => {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
           }
+          walletDebited = true;
 
           result = await purchaseAirtime(networkCategory, body.amount, body.mobile_number, body.network_id);
           
@@ -614,11 +621,7 @@ Deno.serve(async (req) => {
             }
           );
 
-          // Calculate and add cashback for airtime
-          const airtimeCashback = calculateCashback('airtime', amount);
-          if (airtimeCashback > 0) {
-            await addCashback(supabase, userId, airtimeCashback, 'airtime', description);
-          }
+          // Airtime cashback disabled
 
         } else if (serviceType === 'data') {
           if (!body.plan || !body.mobile_number || !body.amount) {
@@ -627,12 +630,42 @@ Deno.serve(async (req) => {
           amount = body.amount;
           description = `Data purchase - ${body.mobile_number}`;
 
-          const deducted = await deductFromWallet(supabase, userId, amount);
-          if (!deducted) {
-            return new Response(JSON.stringify({ success: false, message: 'Insufficient balance' }), {
-              status: 400,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          const requestId = resolveRequestId(body.request_id);
+          let purchase;
+          try {
+            purchase = await beginPurchase(supabase, {
+            userId,
+            requestId,
+            amount: Number(amount),
+            category: 'data',
+            description,
+            metadata: {
+              request_id: requestId,
+              mobile_number: body.mobile_number,
+              plan: body.plan,
+              plan_name: body.plan_name || '',
+              provider: 'rgc',
+              },
             });
+          } catch (e: any) {
+            // No wallet debit happened (e.g. insufficient balance). Never
+            // credit the wallet here — just surface the failure.
+            const insufficient = String(e?.message || '').includes('Insufficient balance');
+            return new Response(JSON.stringify({
+              success: false,
+              message: insufficient ? 'Insufficient balance' : (e?.message || 'Unable to start purchase'),
+            }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          }
+          walletDebited = true;
+          purchaseTransactionId = purchase.transactionId;
+          if (purchase.duplicate) {
+            const unconfirmed = purchase.status === 'pending';
+            return new Response(JSON.stringify({
+              success: purchase.status === 'completed',
+              unconfirmed,
+              transaction_id: purchase.transactionId,
+              message: unconfirmed ? 'This purchase is already pending confirmation.' : `This purchase was already ${purchase.status}.`,
+            }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           }
 
           result = await purchaseData(body.plan, body.mobile_number);
@@ -646,22 +679,23 @@ Deno.serve(async (req) => {
           const transactionStatus = isSuccessful ? 'completed' : 'pending';
           console.log(`RGC data transaction status: ${transactionStatus}`);
           
-          await recordTransaction(
-            supabase, 
-            userId, 
-            amount, 
-            'data', 
-            description, 
-            transactionStatus, 
-            result.reference || undefined, 
-            { 
+          if (transactionStatus === 'completed') {
+            await completePurchase(supabase, purchaseTransactionId, result.reference || undefined, {
               mobile_number: body.mobile_number, 
               plan: body.plan, 
               plan_name: planName,
               provider: 'rgc',
-              api_response: result // Store full API response
-            }
-          );
+              api_response: result,
+            });
+          } else {
+            await markPurchasePending(supabase, purchaseTransactionId, {
+              mobile_number: body.mobile_number,
+              plan: body.plan,
+              plan_name: planName,
+              provider: 'rgc',
+              api_response: result,
+            });
+          }
 
           // Calculate and add cashback for data
           const dataCashback = calculateCashback('data', amount, dataSizeGB);
@@ -688,6 +722,7 @@ Deno.serve(async (req) => {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
           }
+          walletDebited = true;
 
           result = await purchaseCable(body.plan_id, body.smart_card_number);
           await recordTransaction(supabase, userId, amount, 'tv', description, 'completed', result.reference || undefined, { 
@@ -711,6 +746,7 @@ Deno.serve(async (req) => {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
           }
+          walletDebited = true;
 
           result = await purchaseElectricity(body.discoid, body.MeterType, body.meter_number, body.amount);
           await recordTransaction(supabase, userId, amount, 'electricity', description, 'completed', result.reference || undefined, { 
@@ -736,6 +772,7 @@ Deno.serve(async (req) => {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
           }
+          walletDebited = true;
 
           result = await purchaseExamPin(body.examid, body.quantity);
           await recordTransaction(supabase, userId, amount, 'airtime', description, 'completed', result.reference || undefined, { 
@@ -758,33 +795,40 @@ Deno.serve(async (req) => {
         console.error('Purchase failed:', purchaseError);
 
         const decision = classifyPurchaseFailure(purchaseError);
+        if (String(purchaseError?.message || '').startsWith('PURCHASE_RECORD_UNCONFIRMED:')) {
+          decision.refund = false;
+          decision.status = 'pending';
+          decision.userMessage = 'The provider accepted your request and confirmation is pending. Please check transaction history shortly.';
+        }
         const category = serviceType === 'cable' ? 'tv' : serviceType;
 
-        await recordTransaction(
-          supabase,
-          userId,
-          amount,
-          category,
-          description,
-          decision.status,
-          undefined,
-          { error: purchaseError.message, provider: 'rgc', unconfirmed: !decision.refund },
-        );
-
-        if (decision.refund && amount > 0) {
-          const { data: wallet } = await supabase
-            .from('wallets')
-            .select('balance')
-            .eq('user_id', userId)
-            .single();
-
-          if (wallet) {
-            await supabase
-              .from('wallets')
-              .update({ balance: Number(wallet.balance) + Number(amount), updated_at: new Date().toISOString() })
-              .eq('user_id', userId);
+        if (serviceType === 'data' && purchaseTransactionId) {
+          if (decision.refund) {
+            await refundPurchase(supabase, purchaseTransactionId, purchaseError.message, {
+              error: purchaseError.message, provider: 'rgc', unconfirmed: false,
+            });
+          } else {
+            await markPurchasePending(supabase, purchaseTransactionId, {
+              error: purchaseError.message, provider: 'rgc', unconfirmed: true,
+            });
           }
         } else {
+          await recordTransaction(
+            supabase, userId, amount, category, description, decision.status, undefined,
+            { error: purchaseError.message, provider: 'rgc', unconfirmed: !decision.refund },
+          );
+
+          if (decision.refund && amount > 0 && walletDebited) {
+            const { data: wallet } = await supabase.from('wallets').select('balance').eq('user_id', userId).single();
+            if (wallet) {
+              await supabase.from('wallets').update({
+                balance: Number(wallet.balance) + Number(amount), updated_at: new Date().toISOString(),
+              }).eq('user_id', userId);
+            }
+          }
+        }
+
+        if (!decision.refund) {
           console.warn(`RGC ambiguous failure — wallet NOT refunded (user ${userId}, amount ${amount}): ${purchaseError.message}`);
         }
 
@@ -793,7 +837,7 @@ Deno.serve(async (req) => {
           message: decision.userMessage,
           unconfirmed: !decision.refund,
         }), {
-          status: decision.refund ? 400 : 202,
+          status: decision.refund ? 400 : 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }

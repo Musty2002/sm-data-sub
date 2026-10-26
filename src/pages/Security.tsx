@@ -13,12 +13,12 @@ import { useBiometricAuth } from '@/hooks/useBiometricAuth';
 import { useAuth } from '@/hooks/useAuth';
 import { 
   PinSetupDialog, 
-  isPinSetup, 
   clearStoredPin, 
   TransactionPinDialog,
-  isTransactionPinSetup,
-  clearTransactionPin
+  clearTransactionPin,
+  usePinStatus
 } from '@/components/auth/PinSetupDialog';
+
 import { 
   isBiometricForTransactionsEnabled, 
   setBiometricForTransactions 
@@ -47,18 +47,20 @@ export default function Security() {
     confirmPassword: '',
   });
   const [pinSetupOpen, setPinSetupOpen] = useState(false);
-  const [hasPinSetup, setHasPinSetup] = useState(isPinSetup());
+  const pinStatus = usePinStatus();
+  const hasPinSetup = pinStatus.hasAppPin;
+  const hasTransactionPin = pinStatus.hasTransactionPin;
   const [transactionPinOpen, setTransactionPinOpen] = useState(false);
-  const [hasTransactionPin, setHasTransactionPin] = useState(isTransactionPinSetup());
   const [biometricForTransactions, setBiometricForTransactionsState] = useState(isBiometricForTransactionsEnabled());
   const [forgotPinOpen, setForgotPinOpen] = useState(false);
 
-  // Check PIN status on mount
+  // Refresh PIN status when dialogs close
   useEffect(() => {
-    setHasPinSetup(isPinSetup());
     setBiometricForTransactionsState(isBiometricForTransactionsEnabled());
-    setHasTransactionPin(isTransactionPinSetup());
+    pinStatus.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinSetupOpen, transactionPinOpen]);
+
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,17 +116,16 @@ export default function Security() {
     }
   };
 
-  const handleResetPin = () => {
-    clearStoredPin();
-    setHasPinSetup(false);
+  const handleResetPin = async () => {
+    await clearStoredPin();
     setPinSetupOpen(true);
   };
 
-  const handleResetTransactionPin = () => {
-    clearTransactionPin();
-    setHasTransactionPin(false);
+  const handleResetTransactionPin = async () => {
+    await clearTransactionPin();
     setTransactionPinOpen(true);
   };
+
 
   return (
     <MobileLayout showNav={false}>
@@ -417,7 +418,7 @@ export default function Security() {
             open={pinSetupOpen} 
             onOpenChange={setPinSetupOpen}
             onComplete={() => {
-              setHasPinSetup(true);
+              pinStatus.refresh();
               toast.success('PIN set up successfully!');
             }}
           />
@@ -426,7 +427,7 @@ export default function Security() {
             open={transactionPinOpen}
             onOpenChange={setTransactionPinOpen}
             onComplete={() => {
-              setHasTransactionPin(true);
+              pinStatus.refresh();
               toast.success('Transaction PIN set up successfully!');
             }}
           />
@@ -435,11 +436,12 @@ export default function Security() {
             open={forgotPinOpen}
             onOpenChange={setForgotPinOpen}
             onComplete={() => {
-              setHasTransactionPin(true);
+              pinStatus.refresh();
               toast.success('Transaction PIN reset successfully!');
             }}
             userEmail={user?.email || ''}
           />
+
 
           {/* Active Sessions */}
           <Card>

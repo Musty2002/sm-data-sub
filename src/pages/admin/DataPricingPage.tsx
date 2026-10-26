@@ -201,12 +201,20 @@ export default function DataPricingPage() {
 
   const getNetworkGroup = (category: string): string => {
     const upper = category.toUpperCase();
+    // Match on the leading network word first, so labels like
+    // "9MOBILE MTN AWOOF" are grouped under 9mobile, not MTN.
+    const first = upper.trim().split(/\s+/)[0];
+    if (first === '9MOBILE' || first === 'ETISALAT') return '9MOBILE';
+    if (first === 'MTN') return 'MTN';
+    if (first === 'AIRTEL') return 'AIRTEL';
+    if (first === 'GLO') return 'GLO';
+    if (upper.includes('9MOBILE') || upper.includes('ETISALAT')) return '9MOBILE';
     if (upper.includes('MTN')) return 'MTN';
     if (upper.includes('AIRTEL')) return 'AIRTEL';
     if (upper.includes('GLO')) return 'GLO';
-    if (upper.includes('9MOBILE') || upper.includes('ETISALAT')) return '9MOBILE';
     return category;
   };
+
 
   const handleChange = (id: string, field: keyof DataBundle, value: any) => {
     setEditedItems(prev => ({
@@ -404,20 +412,45 @@ export default function DataPricingPage() {
   };
 
   const deleteBundle = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this bundle?')) return;
+    if (!confirm('Disable this bundle? It will no longer appear in the app.')) return;
 
     try {
       const { error } = await supabase
         .from('data_bundles')
-        .delete()
+        .update({ is_active: false })
         .eq('id', id);
 
       if (error) throw error;
-      toast.success('Bundle deleted');
+      toast.success('Bundle disabled');
       fetchBundles();
     } catch (error) {
       console.error('Error deleting:', error);
       toast.error('Failed to delete bundle');
+    }
+  };
+
+  const disableCategory = async () => {
+    if (!selectedCategory) return;
+    if (!confirm(`Disable all plans in ${selectedCategory}? They will no longer appear in the app.`)) return;
+
+    try {
+      let query = supabase
+        .from('data_bundles')
+        .update({ is_active: false })
+        .eq('network_code', selectedNetwork)
+        .eq('data_type', selectedCategory);
+
+      if (selectedProvider && selectedProvider !== 'all') {
+        query = query.eq('provider', selectedProvider);
+      }
+
+      const { error } = await query;
+      if (error) throw error;
+      toast.success(`${selectedCategory} disabled`);
+      fetchBundles();
+    } catch (error) {
+      console.error('Error disabling category:', error);
+      toast.error('Failed to disable category');
     }
   };
 
@@ -771,11 +804,17 @@ export default function DataPricingPage() {
       {/* Database Bundles View */}
       {viewMode === 'database' && (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2">
               <Database className="w-5 h-5" />
               Saved Bundles - {selectedNetwork}
             </CardTitle>
+            {selectedCategory && (
+              <Button variant="destructive" size="sm" onClick={disableCategory}>
+                <Trash2 className="w-4 h-4 mr-2" />
+                Disable category
+              </Button>
+            )}
           </CardHeader>
           <CardContent>
             {loading ? (

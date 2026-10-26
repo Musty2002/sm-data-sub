@@ -517,6 +517,7 @@ export type Database = {
           id: string
           metadata: Json | null
           reference: string | null
+          request_id: string | null
           status: Database["public"]["Enums"]["transaction_status"]
           type: Database["public"]["Enums"]["transaction_type"]
           user_id: string
@@ -529,6 +530,7 @@ export type Database = {
           id?: string
           metadata?: Json | null
           reference?: string | null
+          request_id?: string | null
           status?: Database["public"]["Enums"]["transaction_status"]
           type: Database["public"]["Enums"]["transaction_type"]
           user_id: string
@@ -541,8 +543,36 @@ export type Database = {
           id?: string
           metadata?: Json | null
           reference?: string | null
+          request_id?: string | null
           status?: Database["public"]["Enums"]["transaction_status"]
           type?: Database["public"]["Enums"]["transaction_type"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_pins: {
+        Row: {
+          app_pin_hash: string | null
+          created_at: string
+          id: string
+          transaction_pin_hash: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          app_pin_hash?: string | null
+          created_at?: string
+          id?: string
+          transaction_pin_hash?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          app_pin_hash?: string | null
+          created_at?: string
+          id?: string
+          transaction_pin_hash?: string | null
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -561,6 +591,39 @@ export type Database = {
         Update: {
           id?: string
           role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      virtual_accounts: {
+        Row: {
+          account_name: string
+          account_number: string
+          bank_name: string
+          created_at: string
+          id: string
+          provider: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_name: string
+          account_number: string
+          bank_name: string
+          created_at?: string
+          id?: string
+          provider: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_name?: string
+          account_number?: string
+          bank_name?: string
+          created_at?: string
+          id?: string
+          provider?: string
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -594,7 +657,26 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      begin_purchase: {
+        Args: {
+          p_amount: number
+          p_category: Database["public"]["Enums"]["transaction_category"]
+          p_description: string
+          p_metadata?: Json
+          p_request_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
       block_all_web_users: { Args: never; Returns: undefined }
+      complete_purchase: {
+        Args: {
+          p_metadata?: Json
+          p_reference?: string
+          p_transaction_id: string
+        }
+        Returns: boolean
+      }
       deduct_wallet_balance: {
         Args: { _amount: number; _user_id: string }
         Returns: boolean
@@ -609,6 +691,10 @@ export type Database = {
         Returns: boolean
       }
       is_user_blocked: { Args: { _user_id: string }; Returns: boolean }
+      mark_purchase_pending: {
+        Args: { p_metadata?: Json; p_transaction_id: string }
+        Returns: boolean
+      }
       process_aspfiy_deposit: {
         Args: {
           p_amount: number
@@ -618,6 +704,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: number
+      }
+      refund_purchase: {
+        Args: { p_metadata?: Json; p_reason: string; p_transaction_id: string }
+        Returns: boolean
       }
     }
     Enums: {
@@ -648,12 +738,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -677,11 +767,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -702,11 +792,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -727,11 +817,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -744,11 +834,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

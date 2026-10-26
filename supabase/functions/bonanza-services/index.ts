@@ -2,29 +2,35 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { validateUserAccount } from '../_shared/validate-account.ts';
 import { checkRateLimit } from '../_shared/rate-limit.ts';
 import { AmbiguousProviderError, classifyPurchaseFailure } from '../_shared/purchase-safety.ts';
+import { beginPurchase, completePurchase, markPurchasePending, refundPurchase, resolveRequestId } from '../_shared/purchase-lifecycle.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const BONANZA_BASE_URL = 'https://bonanzasubapi.com/api';
+const BONANZA_BASE_URL = 'https://bonanzasub.com/api';
 
 function cleanSecret(v: string | undefined | null) {
   return (v || '').trim().replace(/^['"]|['"]$/g, '').trim();
 }
 
-// Network id mapping used by Bonanza (typical Nigerian VTU aggregator convention)
-// 1=MTN, 2=GLO, 3=9MOBILE, 4=AIRTEL
+// Network ids per Bonanza docs: 1=MTN, 2=AIRTEL, 3=GLO, 4=9MOBILE
 function getNetworkId(name: string): number {
   const n = (name || '').toString().trim().toUpperCase();
   const map: Record<string, number> = {
-    'MTN': 1, 'GLO': 2, '9MOBILE': 3, 'ETISALAT': 3, 'AIRTEL': 4,
+    'MTN': 1, 'AIRTEL': 2, 'GLO': 3, '9MOBILE': 4, 'ETISALAT': 4,
     '1': 1, '2': 2, '3': 3, '4': 4,
   };
   const id = map[n];
   if (!id) throw new Error(`Unsupported network: ${name}`);
   return id;
+}
+
+// Deterministic provider reference derived from our request id, so a retry of
+// the same purchase reuses the same upstream reference.
+function buildRef(prefix: string, requestId: string) {
+  return `${prefix}_${requestId.replace(/-/g, '').slice(0, 24).toUpperCase()}`;
 }
 
 async function bonanzaRequest(path: string, method: 'GET' | 'POST' = 'GET', body?: object) {
@@ -53,7 +59,6 @@ async function bonanzaRequest(path: string, method: 'GET' | 'POST' = 'GET', body
   try { data = text ? JSON.parse(text) : {}; } catch { parsed = false; data = { message: text }; }
   console.log(`Bonanza status ${res.status}`, JSON.stringify(data));
 
-  // Non-JSON body or 5xx: we can't tell if provider processed the request.
   if (!parsed) {
     throw new AmbiguousProviderError(`Unexpected Bonanza response (status ${res.status})`, { status: res.status, raw: text });
   }
@@ -61,11 +66,18 @@ async function bonanzaRequest(path: string, method: 'GET' | 'POST' = 'GET', body
     throw new AmbiguousProviderError(`Bonanza server error (${res.status})`, { status: res.status, raw: data });
   }
 
-  if (!res.ok || data?.Status === 'failed' || data?.status === 'failed' || data?.success === false) {
-    const msg = data?.message || data?.api_response || data?.detail || `Bonanza request failed (${res.status})`;
+  const statusText = String(data?.status ?? '').toLowerCase();
+  if (!res.ok || statusText === 'failed' || statusText === 'error' || data?.success === false) {
+    const msg = data?.message || data?.msg || data?.api_response || data?.detail || `Bonanza request failed (${res.status})`;
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
   }
   return data;
+}
+
+function isSuccessful(result: any) {
+  const s1 = String(result?.Status ?? '').toLowerCase();
+  const s2 = String(result?.status ?? '').toLowerCase();
+  return s1 === 'successful' || s1 === 'success' || s2 === 'successful' || s2 === 'success' || result?.success === true;
 }
 
 async function recordTransaction(
@@ -80,66 +92,108 @@ async function recordTransaction(
   if (error) console.error('record tx err', error);
 }
 
-async function deductFromWallet(supabase: any, userId: string, amount: number) {
-  const { data, error } = await supabase.rpc('deduct_wallet_balance', {
-    _user_id: userId, _amount: amount,
-  });
-  if (error) { console.error(error); return false; }
-  return data === true;
-}
-
-async function refundWallet(supabase: any, userId: string, amount: number) {
-  const { data: w } = await supabase.from('wallets').select('balance').eq('user_id', userId).single();
-  if (w) {
-    await supabase.from('wallets').update({
-      balance: Number(w.balance) + Number(amount), updated_at: new Date().toISOString(),
-    }).eq('user_id', userId);
-  }
-}
-
-// Read the provider-side wallet balance. Used to decide whether a "failed"
-// response actually cost us money upstream (provider delivered / debited us).
-async function getProviderBalance(): Promise<number | null> {
+// Ask Bonanza for the exact order we sent, by our own reference. This is
+// race-safe: it can never match another user's purchase.
+async function lookupProviderTransaction(reference: string): Promise<any | null> {
   try {
-    const data = await bonanzaRequest('/user/');
-    const raw = data?.user?.Account_Balance ?? data?.user?.wallet_balance ?? data?.Account_Balance;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : null;
+    const data = await bonanzaRequest(`/transaction/status/?reference=${encodeURIComponent(reference)}`);
+    return data?.response ?? null;
   } catch (e) {
-    console.warn('Could not read Bonanza balance', e);
+    console.warn('Could not look up Bonanza transaction', e);
     return null;
   }
 }
 
-function digitsOnly(v: unknown) {
-  return String(v ?? '').replace(/\D/g, '');
+function extractDataSizeGB(planName: string): number {
+  if (!planName) return 0;
+  const gbMatch = planName.match(/(\d+\.?\d*)\s*GB/i);
+  if (gbMatch) return parseFloat(gbMatch[1]);
+  const mbMatch = planName.match(/(\d+\.?\d*)\s*MB/i);
+  if (mbMatch) return parseFloat(mbMatch[1]) / 1024;
+  return 0;
 }
 
-// Look up the actual order on the provider side, matched by phone number +
-// plan/amount within a short time window. This is race-safe: unlike comparing
-// wallet balances, a concurrent purchase by another user can't be mistaken for
-// this one.
-async function findProviderOrder(
-  kind: 'data' | 'airtime',
-  mobileNumber: string,
-  match: { plan?: number; amount?: number },
-  sinceMs: number,
-): Promise<any | null> {
+async function getCashbackConfig(supabase: any) {
+  const fallback = { enabled: true, data_rate: 5, data_unit: '1GB', airtime_rate: 2, airtime_unit: 100 };
   try {
-    const data = await bonanzaRequest(kind === 'airtime' ? '/topup/' : '/data/');
-    const rows: any[] = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
-    const phone = digitsOnly(mobileNumber).slice(-10);
-    return rows.find((r) => {
-      if (digitsOnly(r?.mobile_number).slice(-10) !== phone) return false;
-      const created = Date.parse(r?.create_date ?? '');
-      if (Number.isFinite(created) && created < sinceMs - 120_000) return false;
-      if (match.plan !== undefined) return Number(r?.plan) === Number(match.plan);
-      if (match.amount !== undefined) return Math.abs(Number(r?.amount ?? r?.plan_amount) - match.amount) < 1;
-      return true;
-    }) ?? null;
-  } catch (e) {
-    console.warn('Could not list Bonanza orders', e);
-    return null;
+    const { data } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'cashback_config')
+      .maybeSingle();
+    return { ...fallback, ...((data?.value as Record<string, unknown>) || {}) };
+  } catch (_e) {
+    return fallback;
+  }
+}
+
+// Award cashback: data => rate per full GB, airtime => rate per unit spent
+async function awardCashback(
+  supabase: any,
+  userId: string,
+  category: 'data' | 'airtime',
+  amount: number,
+  planName: string | undefined,
+  description: string,
+) {
+  try {
+    const config = await getCashbackConfig(supabase);
+    if (config.enabled === false) return;
+
+    let cashback = 0;
+    if (category === 'data') {
+      const gb = extractDataSizeGB(planName || '');
+      cashback = Math.floor(gb) * Number(config.data_rate || 0);
+    } else {
+      const unit = Number(config.airtime_unit || 100) || 100;
+      cashback = Math.floor(amount / unit) * Number(config.airtime_rate || 0);
+    }
+    if (!cashback || cashback <= 0) return;
+
+    let { data: wallet } = await supabase
+      .from('cashback_wallets')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (!wallet) {
+      const { data: created, error: createError } = await supabase
+        .from('cashback_wallets')
+        .insert({ user_id: userId, balance: 0, total_earned: 0, total_withdrawn: 0 })
+        .select()
+        .single();
+      if (createError) {
+        console.error('Error creating cashback wallet:', createError);
+        return;
+      }
+      wallet = created;
+    }
+
+    const { error: updateError } = await supabase
+      .from('cashback_wallets')
+      .update({
+        balance: Number(wallet.balance) + cashback,
+        total_earned: Number(wallet.total_earned) + cashback,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', userId);
+
+    if (updateError) {
+      console.error('Error updating cashback wallet:', updateError);
+      return;
+    }
+
+    await supabase.from('cashback_transactions').insert({
+      user_id: userId,
+      amount: cashback,
+      type: 'earned',
+      category,
+      description: `Cashback from ${description}`,
+    });
+
+    console.log(`Awarded ${cashback} naira cashback (${category}) to ${userId}`);
+  } catch (error) {
+    console.error('Error awarding cashback:', error);
   }
 }
 
@@ -162,7 +216,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { action, serviceType } = body || {};
 
-    // Public: fetch balance/user info (used by admin to test connectivity)
+    // Balance / account info (admin connectivity test)
     if (action === 'get-user') {
       const data = await bonanzaRequest('/user/');
       return new Response(JSON.stringify({ success: true, data }), {
@@ -170,56 +224,56 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Diagnostic: list recent provider-side orders (data or topup)
-    if (action === 'list-orders') {
-      const path = body?.kind === 'airtime' ? '/topup/' : '/data/';
-      const data = await bonanzaRequest(path);
+    // Diagnostic: probe an arbitrary provider GET path (admin use)
+    if (action === 'probe') {
+      const data = await bonanzaRequest(String(body?.path || '/user/'));
       return new Response(JSON.stringify({ success: true, data }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Public: fetch data plans list (endpoint convention on Bonanza-style APIs)
-    if (action === 'get-services' && serviceType === 'data') {
-      try {
-        const data = await bonanzaRequest('/user/');
-        // Bonanza's user endpoint typically returns a MOBILE_NETWORK / Dataplans block
-        const plans: any[] = [];
-        const networks = data?.Dataplans || {};
-        const pushPlan = (netKey: string, p: any) => {
-          if (!p || (!p.dataplan_id && !p.id)) return;
-          plans.push({
-            id: Number(p.dataplan_id || p.id),
-            product_id: Number(p.dataplan_id || p.id),
-            service: p.plan_type || 'DATA',
-            amount: String(p.plan_amount || p.amount || ''),
-            name: [p.plan, p.month_validate].filter(Boolean).join(' - '),
-            plan_size: p.plan,
-            validity: p.month_validate,
-            category: `${(p.plan_network || netKey || '').toUpperCase().replace('_PLAN','')} ${p.plan_type || ''}`.trim(),
-            available: true,
-            provider: 'bonanza',
-          });
-        };
-        // Structure: Dataplans.MTN_PLAN.{CORPORATE|SME|GIFTING}[]
-        Object.entries(networks).forEach(([netKey, group]: [string, any]) => {
-          if (Array.isArray(group)) {
-            group.forEach((p: any) => pushPlan(netKey, p));
-          } else if (group && typeof group === 'object') {
-            Object.values(group).forEach((arr: any) => {
-              if (Array.isArray(arr)) arr.forEach((p: any) => pushPlan(netKey, p));
-            });
-          }
-        });
-        return new Response(JSON.stringify({ success: true, data: plans, raw: data }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      } catch (e: any) {
-        return new Response(JSON.stringify({ success: false, message: e.message }), {
-          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    // Plan catalogue used by the admin data pricing page.
+    // Bonanza has no public plan-list endpoint, so we serve the stored
+    // Bonanza price list (imported from the provider price sheet).
+    if (action === 'get-services') {
+      const { data: rows, error } = await supabase
+        .from('data_bundles')
+        .select('plan_code, plan_name, data_type, network_code, api_price, app_price, validity, is_active')
+        .eq('provider', 'bonanza')
+        .order('data_type', { ascending: true })
+        .order('api_price', { ascending: true });
+
+      if (error) {
+        return new Response(JSON.stringify({ success: false, message: error.message }), {
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+
+      const bundles = (rows || []).map((b: any) => ({
+        id: String(b.plan_code),
+        product_id: String(b.plan_code),
+        service: 'DATA',
+        amount: String(b.api_price),
+        name: b.plan_name,
+        category: b.data_type,
+        available: true,
+        validity: b.validity,
+      }));
+
+      return new Response(JSON.stringify({ success: true, data: bundles }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
+
+
+    // Diagnostic: look up a single order by reference
+    if (action === 'transaction-status') {
+      const data = await bonanzaRequest(`/transaction/status/?reference=${encodeURIComponent(String(body?.reference || ''))}`);
+      return new Response(JSON.stringify({ success: true, data }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
 
     if (action !== 'purchase') {
       return new Response(JSON.stringify({ success: false, message: 'Invalid action' }), {
@@ -251,7 +305,8 @@ Deno.serve(async (req) => {
     let amount = 0;
     let description = '';
     let result: any;
-    let attemptStartedAt = Date.now();
+    let purchaseTransactionId: string | null = null;
+    let providerRef: string | null = null;
 
     try {
       if (serviceType === 'data') {
@@ -261,30 +316,54 @@ Deno.serve(async (req) => {
         amount = Number(body.amount);
         description = `Data purchase - ${body.mobile_number}`;
 
-        if (!(await deductFromWallet(supabase, userId, amount))) {
-          return new Response(JSON.stringify({ success: false, message: 'Insufficient balance' }), {
-            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
+        const requestId = resolveRequestId(body.request_id);
+        providerRef = buildRef('DATA', requestId);
+        const purchase = await beginPurchase(supabase, {
+          userId,
+          requestId,
+          amount,
+          category: 'data',
+          description,
+          metadata: {
+            request_id: requestId,
+            provider_ref: providerRef,
+            mobile_number: body.mobile_number,
+            plan: body.plan,
+            plan_name: body.plan_name,
+            provider: 'bonanza',
+          },
+        });
+        purchaseTransactionId = purchase.transactionId;
+        if (purchase.duplicate) {
+          const unconfirmed = purchase.status === 'pending';
+          return new Response(JSON.stringify({
+            success: purchase.status === 'completed',
+            unconfirmed,
+            transaction_id: purchase.transactionId,
+            message: unconfirmed ? 'This purchase is already pending confirmation.' : `This purchase was already ${purchase.status}.`,
+          }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
         const networkId = getNetworkId(body.network || body.network_name || '');
-        attemptStartedAt = Date.now();
         result = await bonanzaRequest('/data/', 'POST', {
-          network: networkId,
-          mobile_number: body.mobile_number,
-          plan: Number(body.plan),
-          Ported_number: true,
+          network: String(networkId),
+          phone: String(body.mobile_number),
+          ref: providerRef,
+          data_plan: String(body.plan),
+          ported_number: true,
         });
 
-        const success = result?.Status?.toString().toLowerCase() === 'successful' ||
-                        result?.status?.toString().toLowerCase() === 'successful' ||
-                        result?.Status === 'success' || result?.success === true;
-        const status = success ? 'completed' : 'pending';
-
-        await recordTransaction(supabase, userId, amount, 'data', description, status,
-          result?.id?.toString() || result?.reference,
-          { mobile_number: body.mobile_number, plan: body.plan, plan_name: body.plan_name,
-            provider: 'bonanza', api_response: result });
+        const status = isSuccessful(result) ? 'completed' : 'pending';
+        const resultMetadata = {
+          mobile_number: body.mobile_number, plan: body.plan, plan_name: body.plan_name,
+          provider: 'bonanza', provider_ref: providerRef, api_response: result,
+        };
+        if (status === 'completed') {
+          await completePurchase(supabase, purchaseTransactionId, providerRef, resultMetadata);
+          await awardCashback(supabase, userId, 'data', amount, body.plan_name, description);
+        } else {
+          await markPurchasePending(supabase, purchaseTransactionId, resultMetadata);
+        }
 
       } else if (serviceType === 'airtime') {
         if (!body.amount || !body.mobile_number || !body.network) {
@@ -293,31 +372,54 @@ Deno.serve(async (req) => {
         amount = Number(body.amount);
         description = `Airtime purchase - ${body.mobile_number}`;
 
-        if (!(await deductFromWallet(supabase, userId, amount))) {
-          return new Response(JSON.stringify({ success: false, message: 'Insufficient balance' }), {
-            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
+        const airtimeRequestId = resolveRequestId(body.request_id);
+        providerRef = buildRef('AIRTIME', airtimeRequestId);
+        const airtimePurchase = await beginPurchase(supabase, {
+          userId,
+          requestId: airtimeRequestId,
+          amount,
+          category: 'airtime',
+          description,
+          metadata: {
+            request_id: airtimeRequestId,
+            provider_ref: providerRef,
+            mobile_number: body.mobile_number,
+            network: body.network,
+            provider: 'bonanza',
+          },
+        });
+        purchaseTransactionId = airtimePurchase.transactionId;
+        if (airtimePurchase.duplicate) {
+          const unconfirmed = airtimePurchase.status === 'pending';
+          return new Response(JSON.stringify({
+            success: airtimePurchase.status === 'completed',
+            unconfirmed,
+            transaction_id: airtimePurchase.transactionId,
+            message: unconfirmed ? 'This purchase is already pending confirmation.' : `This purchase was already ${airtimePurchase.status}.`,
+          }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
         const networkId = getNetworkId(body.network);
-        attemptStartedAt = Date.now();
-        result = await bonanzaRequest('/topup/', 'POST', {
-          network: networkId,
-          amount: String(amount),
-          mobile_number: body.mobile_number,
-          Ported_number: true,
+        result = await bonanzaRequest('/airtime/', 'POST', {
+          network: String(networkId),
+          phone: String(body.mobile_number),
+          ref: providerRef,
           airtime_type: 'VTU',
+          ported_number: true,
+          amount: String(amount),
         });
 
-        const success = result?.Status?.toString().toLowerCase() === 'successful' ||
-                        result?.status?.toString().toLowerCase() === 'successful' ||
-                        result?.success === true;
-        const status = success ? 'completed' : 'pending';
-
-        await recordTransaction(supabase, userId, amount, 'airtime', description, status,
-          result?.id?.toString() || result?.reference,
-          { mobile_number: body.mobile_number, network: body.network,
-            provider: 'bonanza', api_response: result });
+        const status = isSuccessful(result) ? 'completed' : 'pending';
+        const airtimeMetadata = {
+          mobile_number: body.mobile_number, network: body.network,
+          provider: 'bonanza', provider_ref: providerRef, api_response: result,
+        };
+        if (status === 'completed') {
+          await completePurchase(supabase, purchaseTransactionId, providerRef, airtimeMetadata);
+          // Airtime cashback disabled
+        } else {
+          await markPurchasePending(supabase, purchaseTransactionId, airtimeMetadata);
+        }
 
       } else {
         throw new Error('Unsupported service type');
@@ -328,55 +430,66 @@ Deno.serve(async (req) => {
       });
     } catch (err: any) {
       console.error('Bonanza purchase error', err);
-      const decision = classifyPurchaseFailure(err);
 
-      // Even for "definitive" 4xx rejections, Bonanza sometimes still creates
-      // and processes the order. Look up THIS order on the provider side,
-      // matched by phone number + plan/amount within this attempt's time
-      // window — a concurrent purchase by another user cannot match it.
-      let providerOrder: any = null;
-      if (amount > 0 && (serviceType === 'data' || serviceType === 'airtime')) {
-        providerOrder = await findProviderOrder(
-          serviceType,
-          String(body.mobile_number || ''),
-          serviceType === 'data' ? { plan: Number(body.plan) } : { amount },
-          attemptStartedAt,
-        );
+      // Wallet was never debited (e.g. insufficient balance) — surface the
+      // failure without recording a debit or touching the wallet.
+      if (!purchaseTransactionId && String(err?.message || '').includes('Insufficient balance')) {
+        return new Response(JSON.stringify({ success: false, message: 'Insufficient balance' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
-      const orderStatus = String(providerOrder?.Status ?? providerOrder?.status ?? '').toLowerCase();
+
+      const decision = classifyPurchaseFailure(err);
+      if (String(err?.message || '').startsWith('PURCHASE_RECORD_UNCONFIRMED:')) {
+        decision.refund = false;
+        decision.status = 'pending';
+        decision.userMessage = 'The provider accepted your request and confirmation is pending. Please check transaction history shortly.';
+      }
+
+      // Even for "definitive" rejections, Bonanza sometimes still processes the
+      // order. Look up THIS order upstream by our own reference.
+      let providerOrder: any = null;
+      if (purchaseTransactionId && providerRef) {
+        providerOrder = await lookupProviderTransaction(providerRef);
+      }
+      const orderStatus = String(providerOrder?.status ?? providerOrder?.Status ?? '').toLowerCase();
       const providerDelivered = orderStatus === 'successful' || orderStatus === 'success' ||
                                 orderStatus === 'processing' || orderStatus === 'pending';
 
       if (providerDelivered) {
-        // Order exists upstream and was accepted — never refund.
         decision.refund = false;
         decision.status = 'pending';
         decision.userMessage =
           "Your order was accepted by the provider but we couldn't confirm delivery yet. It's saved and will be reconciled — contact support if it doesn't arrive.";
-      } else if (providerOrder && orderStatus === 'failed') {
-        // Provider explicitly recorded this exact order as failed → refund.
+      } else if (providerOrder && (orderStatus === 'failed' || orderStatus === 'refunded')) {
         decision.refund = true;
         decision.status = 'failed';
       }
 
       if (amount > 0) {
-        await recordTransaction(supabase, userId, amount, serviceType, description, decision.status,
-          providerOrder?.id?.toString(), {
-            error: err.message, provider: 'bonanza', unconfirmed: !decision.refund,
-            mobile_number: body.mobile_number,
-            provider_order: providerOrder ?? null,
-            provider_order_status: orderStatus || null,
-          });
-        if (decision.refund) {
-          await refundWallet(supabase, userId, amount);
+        const failureMetadata = {
+          error: err.message, provider: 'bonanza', unconfirmed: !decision.refund,
+          mobile_number: body.mobile_number,
+          provider_ref: providerRef,
+          provider_order: providerOrder ?? null,
+          provider_order_status: orderStatus || null,
+        };
+        if (purchaseTransactionId) {
+          if (decision.refund) {
+            await refundPurchase(supabase, purchaseTransactionId, err.message, failureMetadata);
+          } else {
+            await markPurchasePending(supabase, purchaseTransactionId, failureMetadata);
+          }
         } else {
-          console.warn(`Bonanza unconfirmed failure — wallet NOT refunded (user ${userId}, amount ${amount}, providerOrder=${providerOrder?.id ?? 'none'}/${orderStatus || 'n/a'}): ${err.message}`);
+          await recordTransaction(supabase, userId, amount, serviceType, description, decision.status,
+            providerRef ?? undefined, failureMetadata);
         }
+        if (!decision.refund) console.warn(`Bonanza unconfirmed failure — wallet NOT refunded (user ${userId}, amount ${amount}, ref ${providerRef}/${orderStatus || 'n/a'}): ${err.message}`);
       }
       return new Response(JSON.stringify({
         success: false, message: decision.userMessage, unconfirmed: !decision.refund,
       }), {
-        status: decision.refund ? 400 : 202,
+        status: decision.refund ? 400 : 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }

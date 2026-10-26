@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { MobileLayout } from '@/components/layout/MobileLayout';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { PhoneInputWithContacts } from '@/components/PhoneInputWithContacts';
@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { TransactionReceipt } from '@/components/TransactionReceipt';
+import { PurchaseProgress } from '@/components/PurchaseProgress';
 import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
 import { TransactionVerifyDialog } from '@/components/auth/TransactionVerifyDialog';
 import mtnLogo from '@/assets/networks/mtn-logo.png';
@@ -88,6 +89,8 @@ export default function Airtime() {
   const [showTopUpPrompt, setShowTopUpPrompt] = useState(false);
   const [recentNumbers, setRecentNumbers] = useState<string[]>([]);
   const [showVerifyDialog, setShowVerifyDialog] = useState(false);
+  const purchaseIntentRef = useRef<{ key: string; requestId: string } | null>(null);
+  const purchaseInFlightRef = useRef(false);
   const [step, setStep] = useState<1 | 2>(1);
   const [lastTransaction, setLastTransaction] = useState<{
     id: string;
@@ -166,6 +169,8 @@ export default function Airtime() {
   };
 
   const handlePurchase = async () => {
+    if (purchaseInFlightRef.current) return;
+    purchaseInFlightRef.current = true;
     setShowVerifyDialog(false);
     setPurchasing(true);
     setShowTopUpPrompt(false);
@@ -173,11 +178,18 @@ export default function Airtime() {
     if (!selectedNetwork) {
       toast({ variant: 'destructive', title: 'Error', description: 'Please select a network first.' });
       setPurchasing(false);
+      purchaseInFlightRef.current = false;
       return;
     }
     
     const purchaseAmount = parseFloat(amount);
     const normalizedPhone = normalizePhoneNumber(phoneNumber);
+    const intentKey = `${selectedNetwork.category}|${normalizedPhone}|${purchaseAmount}`;
+    if (!purchaseIntentRef.current || purchaseIntentRef.current.key !== intentKey) {
+      purchaseIntentRef.current = { key: intentKey, requestId: crypto.randomUUID() };
+    }
+    const requestId = purchaseIntentRef.current.requestId;
+    let preserveRequestId = false;
     
     try {
       const { data, error } = await supabase.functions.invoke('bonanza-services', {
@@ -187,12 +199,14 @@ export default function Airtime() {
           network: selectedNetwork.category,
           amount: purchaseAmount,
           mobile_number: normalizedPhone,
+          request_id: requestId,
         },
       });
       let message: string | undefined;
       if (error) message = await getEdgeFunctionErrorMessage(error);
       const primaryFailed = !!error || !data?.success;
       if (primaryFailed) {
+        preserveRequestId = !!error || data?.unconfirmed === true;
         throw new Error(message || data?.message || 'Purchase failed');
       }
 
@@ -209,11 +223,15 @@ export default function Airtime() {
       setShowReceipt(true);
       setAmount('');
       setSelectedNetwork(null);
+      purchaseIntentRef.current = null;
       setStep(1);
     } catch (error: any) {
       console.error('Purchase error:', error);
       let errorTitle = 'Purchase Failed';
       let errorDescription = error.message || 'Unable to complete purchase. Please try again.';
+      const errorText = String(error.message || '').toLowerCase();
+      preserveRequestId = preserveRequestId || errorText.includes('pending') || errorText.includes('confirm') || errorText.includes('accepted');
+      if (!preserveRequestId) purchaseIntentRef.current = null;
       const isUserInsufficientBalance = error.message === 'Insufficient balance';
       
       if (isUserInsufficientBalance) {
@@ -228,6 +246,7 @@ export default function Airtime() {
       toast({ variant: 'destructive', title: errorTitle, description: errorDescription });
     } finally {
       setPurchasing(false);
+      purchaseInFlightRef.current = false;
     }
   };
 
@@ -361,6 +380,8 @@ export default function Airtime() {
                   ))}
                 </div>
               </div>
+
+              <PurchaseProgress active={purchasing} />
 
               {/* Purchase Button */}
               <Button

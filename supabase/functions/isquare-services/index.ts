@@ -5,6 +5,13 @@ import {
   AmbiguousProviderError,
   classifyPurchaseFailure,
 } from '../_shared/purchase-safety.ts';
+import {
+  beginPurchase,
+  completePurchase,
+  markPurchasePending,
+  refundPurchase,
+  resolveRequestId,
+} from '../_shared/purchase-lifecycle.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -570,6 +577,7 @@ Deno.serve(async (req) => {
 
       let amount = 0;
       let description = '';
+      let purchaseTransactionId: string | null = null;
 
       try {
         if (serviceType === 'data') {
@@ -581,13 +589,40 @@ Deno.serve(async (req) => {
           description = `Data purchase - ${body.phone_number}`;
           const reference = `ISQ-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-          // Deduct from wallet first
-          const deducted = await deductFromWallet(supabase, userId, amount);
-          if (!deducted) {
-            return new Response(JSON.stringify({ success: false, message: 'Insufficient balance' }), {
-              status: 400,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          // Atomic: debit wallet + create pending transaction in one step
+          const requestId = resolveRequestId((body as any).request_id);
+          let purchase;
+          try {
+            purchase = await beginPurchase(supabase, {
+              userId,
+              requestId,
+              amount,
+              category: 'data',
+              description,
+              metadata: {
+                request_id: requestId,
+                mobile_number: body.phone_number,
+                plan: body.plan,
+                plan_name: body.plan_name,
+                provider: 'isquare',
+              },
             });
+          } catch (e: any) {
+            const insufficient = String(e?.message || '').includes('Insufficient balance');
+            return new Response(JSON.stringify({
+              success: false,
+              message: insufficient ? 'Insufficient balance' : (e?.message || 'Unable to start purchase'),
+            }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          }
+          purchaseTransactionId = purchase.transactionId;
+          if (purchase.duplicate) {
+            const unconfirmed = purchase.status === 'pending';
+            return new Response(JSON.stringify({
+              success: purchase.status === 'completed',
+              unconfirmed,
+              transaction_id: purchase.transactionId,
+              message: unconfirmed ? 'This purchase is already pending confirmation.' : `This purchase was already ${purchase.status}.`,
+            }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           }
 
           const result = await purchaseData(body.plan, body.phone_number, reference);
@@ -606,34 +641,31 @@ Deno.serve(async (req) => {
           const transactionStatus = isSuccessful ? 'completed' : 'pending';
           console.log(`iSquare data transaction status determined: ${transactionStatus} (API status: ${result.status})`);
           
-          await recordTransaction(
-            supabase, 
-            userId, 
-            amount, 
-            'data', 
-            description, 
-            transactionStatus,
-            result.reference || reference, 
-            { 
-              mobile_number: body.phone_number, 
-              plan: body.plan, 
-              plan_name: planName,
-              provider: 'isquare',
-              api_response: result // Store full API response for accurate status detection
-            }
-          );
+          const dataMetadata = {
+            mobile_number: body.phone_number,
+            plan: body.plan,
+            plan_name: planName,
+            provider: 'isquare',
+            api_response: result,
+          };
+          if (transactionStatus === 'completed') {
+            await completePurchase(supabase, purchaseTransactionId, result.reference || reference, dataMetadata);
+          } else {
+            await markPurchasePending(supabase, purchaseTransactionId, dataMetadata);
+          }
 
           // Calculate and add cashback
           const dataCashback = calculateCashback(dataSizeGB);
-          if (dataSizeGB >= 1) {
+          if (transactionStatus === 'completed' && dataSizeGB >= 1) {
             await processReferralBonus(supabase, userId);
           }
-          if (dataCashback > 0) {
+          if (transactionStatus === 'completed' && dataCashback > 0) {
             await addCashback(supabase, userId, dataCashback, 'data', description);
           }
 
           return new Response(JSON.stringify({ 
-            success: true, 
+            success: true,
+            unconfirmed: transactionStatus !== 'completed',
             data: result,
             reference: result.reference || reference 
           }), {
@@ -649,13 +681,38 @@ Deno.serve(async (req) => {
           description = `Airtime purchase - ${phoneNumber}`;
           const reference = `ISQ-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-          // Deduct from wallet first
-          const deducted = await deductFromWallet(supabase, userId, amount);
-          if (!deducted) {
-            return new Response(JSON.stringify({ success: false, message: 'Insufficient balance' }), {
-              status: 400,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          const airtimeRequestId = resolveRequestId((body as any).request_id);
+          let airtimePurchase;
+          try {
+            airtimePurchase = await beginPurchase(supabase, {
+              userId,
+              requestId: airtimeRequestId,
+              amount,
+              category: 'airtime',
+              description,
+              metadata: {
+                request_id: airtimeRequestId,
+                mobile_number: phoneNumber,
+                network: body.network,
+                provider: 'isquare',
+              },
             });
+          } catch (e: any) {
+            const insufficient = String(e?.message || '').includes('Insufficient balance');
+            return new Response(JSON.stringify({
+              success: false,
+              message: insufficient ? 'Insufficient balance' : (e?.message || 'Unable to start purchase'),
+            }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          }
+          purchaseTransactionId = airtimePurchase.transactionId;
+          if (airtimePurchase.duplicate) {
+            const unconfirmed = airtimePurchase.status === 'pending';
+            return new Response(JSON.stringify({
+              success: airtimePurchase.status === 'completed',
+              unconfirmed,
+              transaction_id: airtimePurchase.transactionId,
+              message: unconfirmed ? 'This purchase is already pending confirmation.' : `This purchase was already ${airtimePurchase.status}.`,
+            }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           }
 
           const result = await purchaseAirtime(body.network, phoneNumber, amount, reference);
@@ -671,24 +728,21 @@ Deno.serve(async (req) => {
           const transactionStatus = isSuccessful ? 'completed' : 'pending';
           console.log(`iSquare airtime transaction status determined: ${transactionStatus} (API status: ${result.status})`);
           
-          await recordTransaction(
-            supabase, 
-            userId, 
-            amount, 
-            'airtime', 
-            description, 
-            transactionStatus,
-            result.reference || reference, 
-            { 
-              mobile_number: phoneNumber, 
-              network: body.network,
-              provider: 'isquare',
-              api_response: result // Store full API response for accurate status detection
-            }
-          );
+          const airtimeMetadata = {
+            mobile_number: phoneNumber,
+            network: body.network,
+            provider: 'isquare',
+            api_response: result,
+          };
+          if (transactionStatus === 'completed') {
+            await completePurchase(supabase, purchaseTransactionId, result.reference || reference, airtimeMetadata);
+          } else {
+            await markPurchasePending(supabase, purchaseTransactionId, airtimeMetadata);
+          }
 
           return new Response(JSON.stringify({ 
-            success: true, 
+            success: true,
+            unconfirmed: transactionStatus !== 'completed',
             data: result,
             reference: result.reference || reference 
           }), {
@@ -702,39 +756,31 @@ Deno.serve(async (req) => {
         console.error('Purchase failed:', purchaseError);
 
         const decision = classifyPurchaseFailure(purchaseError);
+        if (String(purchaseError?.message || '').startsWith('PURCHASE_RECORD_UNCONFIRMED:')) {
+          decision.refund = false;
+          decision.status = 'pending';
+          decision.userMessage = 'The provider accepted your request and confirmation is pending. Please check transaction history shortly.';
+        }
 
-        await recordTransaction(
-          supabase,
-          userId,
-          amount,
-          serviceType,
-          description,
-          decision.status,
-          undefined,
-          {
-            error: purchaseError.message,
-            provider: 'isquare',
-            unconfirmed: !decision.refund,
-          },
-        );
+        const failureMetadata = {
+          error: purchaseError.message,
+          provider: 'isquare',
+          unconfirmed: !decision.refund,
+        };
 
-        if (decision.refund && amount > 0) {
-          const { data: wallet } = await supabase
-            .from('wallets')
-            .select('balance')
-            .eq('user_id', userId)
-            .single();
-
-          if (wallet) {
-            await supabase
-              .from('wallets')
-              .update({ balance: Number(wallet.balance) + Number(amount), updated_at: new Date().toISOString() })
-              .eq('user_id', userId);
+        if (purchaseTransactionId) {
+          // Atomic: refund only when the failure is confirmed, otherwise keep pending.
+          if (decision.refund) {
+            await refundPurchase(supabase, purchaseTransactionId, purchaseError.message, failureMetadata);
+          } else {
+            await markPurchasePending(supabase, purchaseTransactionId, failureMetadata);
+            console.warn(
+              `iSquare ambiguous failure — wallet NOT refunded (user ${userId}, amount ${amount}): ${purchaseError.message}`,
+            );
           }
-        } else {
-          console.warn(
-            `iSquare ambiguous failure — wallet NOT refunded (user ${userId}, amount ${amount}): ${purchaseError.message}`,
-          );
+        } else if (amount > 0) {
+          // Failure before any debit happened — just log a failed attempt.
+          await recordTransaction(supabase, userId, amount, serviceType, description, 'failed', undefined, failureMetadata);
         }
 
         return new Response(JSON.stringify({
