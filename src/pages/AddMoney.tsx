@@ -90,12 +90,38 @@ export default function AddMoney() {
     }
   };
 
-  const hasVirtualAccount = profile?.account_number && profile.account_number.length === 10;
+  const renderAccount = (acc: VirtualAccount, label: string) => (
+    <div className="bg-card rounded-2xl p-5 shadow-sm mb-4 space-y-3">
+      <div className="flex items-center gap-3">
+        <div className={`w-11 h-11 rounded-full flex items-center justify-center text-primary-foreground text-[10px] font-extrabold ${acc.provider === 'paga' ? 'bg-paga' : 'bg-palmpay'}`}>
+          {acc.provider === 'paga' ? 'paga' : 'P'}
+        </div>
+        <div>
+          <h2 className="font-semibold text-foreground">{label}</h2>
+          <p className="text-sm text-muted-foreground">Bank transfer</p>
+        </div>
+      </div>
+      {[
+        { k: 'Bank Name', v: label },
+        { k: 'Account Number', v: acc.account_number },
+        { k: 'Account Name', v: acc.account_name },
+      ].map(({ k, v }) => (
+        <div key={k} className="bg-secondary/10 rounded-xl p-3 flex items-center justify-between">
+          <div>
+            <p className="text-xs text-muted-foreground mb-0.5">{k}</p>
+            <p className="font-semibold text-foreground tracking-wide">{v}</p>
+          </div>
+          <Button variant="ghost" size="icon" onClick={() => copyToClipboard(v, k)}>
+            <Copy className="w-4 h-4" />
+          </Button>
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <MobileLayout showNav={false}>
       <div className="safe-area-top">
-        {/* Header */}
         <div className="flex items-center gap-4 px-4 py-4">
           <button onClick={() => navigate(-1)} className="p-2 -ml-2">
             <ArrowLeft className="w-5 h-5" />
@@ -104,120 +130,38 @@ export default function AddMoney() {
         </div>
 
         <div className="px-4 pb-6">
-          {/* Bank Transfer Card */}
-          <div className="bg-card rounded-2xl p-6 shadow-sm mb-6">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center">
-                <Building2 className="w-6 h-6 text-secondary-foreground" />
-              </div>
-              <div>
-                <h2 className="font-semibold text-foreground">Bank Transfer</h2>
-                <p className="text-sm text-muted-foreground">Transfer to your account</p>
-              </div>
-            </div>
-
-            {hasVirtualAccount ? (
-              <div className="space-y-4">
-                <div className="bg-secondary/50 rounded-xl p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">Bank Name</p>
-                       <p className="font-semibold text-foreground">
-                        {(() => {
-                          const b = (profile?.virtual_account_bank || "").toLowerCase();
-                          if (b.includes("palmpay")) return "PalmPay";
-                          if (b.includes("aspfiy") || b.includes("paga")) return "PalmPay";
-                          return profile?.virtual_account_bank || "PalmPay";
-                        })()}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                        onClick={() => {
-                          copyToClipboard("PalmPay", "Bank name");
-                        }}
-                    >
-                      <Copy className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="bg-secondary/50 rounded-xl p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">Account Number</p>
-                      <p className="font-semibold text-foreground text-lg tracking-wide">
-                        {profile?.account_number}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => copyToClipboard(profile?.account_number || '', 'Account number')}
-                    >
-                      <Copy className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="bg-secondary/50 rounded-xl p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">Account Name</p>
-                      <p className="font-semibold text-foreground">
-                        {profile?.virtual_account_name || profile?.full_name || "User"}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => copyToClipboard(profile?.virtual_account_name || profile?.full_name || '', 'Account name')}
-                    >
-                      <Copy className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="bg-secondary/50 rounded-xl p-4 text-center">
-                  <p className="text-sm font-medium text-foreground">
-                    You already have an account number
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="text-center py-6">
-                <p className="text-muted-foreground mb-4">
-                  You don't have a virtual account yet. Create one to receive payments.
-                </p>
-                <Button 
-                  onClick={() => createVirtualAccount(false)}
-                  disabled={isCreatingAccount}
-                  className="w-full"
-                >
-                  {isCreatingAccount ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Creating Account...
-                    </>
-                  ) : (
-                    'Create Virtual Account'
-                  )}
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {/* Info */}
-          {hasVirtualAccount && (
-            <div className="bg-accent/10 rounded-xl p-4">
-              <p className="text-sm text-foreground">
-                <span className="font-medium">Note:</span> Transfer any amount to the account above.
-                Your wallet will be credited automatically within minutes.
-              </p>
+          {paga ? renderAccount(paga, 'Paga') : (
+            <div className="bg-card rounded-2xl p-5 shadow-sm mb-4 text-center">
+              <p className="text-muted-foreground mb-3 text-sm">Your Paga account is not ready yet.</p>
+              <Button onClick={() => createVirtualAccount(false)} disabled={isCreatingAccount} className="w-full">
+                {isCreatingAccount ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating Account...</> : 'Create Paga Account'}
+              </Button>
             </div>
           )}
+
+          {palmpay ? renderAccount(palmpay, 'PalmPay') : (
+            <div className="bg-card rounded-2xl p-5 shadow-sm mb-4">
+              <div className="flex items-center gap-3 mb-3">
+                <Building2 className="w-6 h-6 text-palmpay" />
+                <h2 className="font-semibold text-foreground">PalmPay</h2>
+              </div>
+              <p className="text-sm text-muted-foreground mb-3">
+                According to CBN and PalmPay compliance rules, you must provide your NIN to get a PalmPay account number.
+              </p>
+              <Button variant="outline" className="w-full" onClick={() => setNinOpen(true)}>
+                Generate PalmPay Account Number
+              </Button>
+            </div>
+          )}
+
+          <div className="bg-accent/10 rounded-xl p-4">
+            <p className="text-sm text-foreground">
+              <span className="font-medium">Note:</span> Transfer any amount to any of your accounts above.
+              Your wallet will be credited automatically within minutes.
+            </p>
+          </div>
         </div>
+        <PalmPayNinDialog open={ninOpen} onOpenChange={setNinOpen} onCreated={refresh} />
       </div>
     </MobileLayout>
   );
