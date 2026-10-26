@@ -7,8 +7,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useVirtualAccounts, VirtualAccount } from '@/hooks/useVirtualAccounts';
 import { PalmPayNinDialog } from './PalmPayNinDialog';
 import walletArt from '@/assets/wallet-3d.png';
-import pagaLogo from '@/assets/banks/paga-logo.png.asset.json';
-import palmpayLogo from '@/assets/banks/palmpay-logo.png.asset.json';
+import pagaLogo from '@/assets/banks/paga-logo.png';
+import palmpayLogo from '@/assets/banks/palmpay-logo.png';
 
 export function AccountCard() {
   const { profile, wallet, user, refreshWallet, refreshCashbackWallet, refreshProfile } = useAuth();
@@ -196,7 +196,7 @@ export function AccountCard() {
 export function BankLogo({ tone, className = 'w-10 h-10' }: { tone: 'paga' | 'palmpay'; className?: string }) {
   return (
     <img
-      src={tone === 'paga' ? pagaLogo.url : palmpayLogo.url}
+      src={tone === 'paga' ? pagaLogo : palmpayLogo}
       alt={tone === 'paga' ? 'Paga' : 'PalmPay'}
       className={`${className} rounded-full shrink-0 object-cover bg-card border border-border/60`}
     />
