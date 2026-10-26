@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { TransactionReceipt } from '@/components/TransactionReceipt';
+import { PurchaseProgress } from '@/components/PurchaseProgress';
 import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
 import { TransactionVerifyDialog } from '@/components/auth/TransactionVerifyDialog';
 import mtnLogo from '@/assets/networks/mtn-logo.png';
@@ -379,6 +380,8 @@ export default function Airtime() {
                   ))}
                 </div>
               </div>
+
+              <PurchaseProgress active={purchasing} />
 
               {/* Purchase Button */}
               <Button
