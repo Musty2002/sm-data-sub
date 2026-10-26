@@ -195,7 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log(`Creating virtual account (attempt ${attempt + 1}/${maxRetries}), phone: ${sanitizedPhone}...`);
         
         const { data: vaData, error: vaError } = await supabase.functions.invoke('create-virtual-account', {
-          body: { userId, email, name, phoneNumber: sanitizedPhone, force }
+          body: { userId, email, name, phoneNumber: sanitizedPhone, force, provider: 'paga' }
         });
         
         if (vaError) {
@@ -244,29 +244,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error as Error | null, data: data ? { user: data.user } : null };
   };
 
+  // Every user gets a Paga account automatically; PalmPay is requested by the user with NIN.
   const ensureVirtualAccount = async (userId: string, authenticatedUser?: User) => {
     try {
-      const { data: prof } = await supabase
-        .from('profiles')
-        .select('virtual_account_name, virtual_account_bank, full_name, phone, email')
-        .eq('user_id', userId)
-        .maybeSingle();
+      const [{ data: prof }, { data: paga }] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('full_name, phone, email')
+          .eq('user_id', userId)
+          .maybeSingle(),
+        supabase
+          .from('virtual_accounts')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('provider', 'paga')
+          .maybeSingle(),
+      ]);
 
-      const bank = (prof?.virtual_account_bank || '').toLowerCase();
-      const isPalmPay = bank.includes('palmpay');
-      const missing = !prof || !prof.virtual_account_name;
-
-      if (missing || !isPalmPay) {
+      if (!paga) {
         const currentUser = authenticatedUser || session?.user || user;
         const metadata = currentUser?.user_metadata || {};
-        console.log(missing ? 'User missing virtual account, provisioning PalmPay...' : 'Migrating user to PalmPay virtual account...');
         createVirtualAccountWithRetry(
           userId,
           prof?.email || currentUser?.email || '',
           prof?.full_name || metadata.full_name || 'User',
           prof?.phone || metadata.phone || '',
           3,
-          !missing // force regenerate for existing aspfiy users
+          false
         );
       }
     } catch (err) {
