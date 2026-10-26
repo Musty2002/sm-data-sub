@@ -7,6 +7,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useVirtualAccounts, VirtualAccount } from '@/hooks/useVirtualAccounts';
 import { PalmPayNinDialog } from './PalmPayNinDialog';
 import walletArt from '@/assets/wallet-3d.png';
+import pagaLogo from '@/assets/banks/paga-logo.png.asset.json';
+import palmpayLogo from '@/assets/banks/palmpay-logo.png.asset.json';
 
 export function AccountCard() {
   const { profile, wallet, user, refreshWallet, refreshCashbackWallet, refreshProfile } = useAuth();
@@ -191,15 +193,13 @@ export function AccountCard() {
   );
 }
 
-function BankLogo({ tone }: { tone: 'paga' | 'palmpay' }) {
+export function BankLogo({ tone, className = 'w-10 h-10' }: { tone: 'paga' | 'palmpay'; className?: string }) {
   return (
-    <div
-      className={`w-10 h-10 rounded-full shrink-0 flex items-center justify-center text-[10px] font-extrabold text-primary-foreground ${
-        tone === 'paga' ? 'bg-paga' : 'bg-palmpay'
-      }`}
-    >
-      {tone === 'paga' ? 'paga' : 'P'}
-    </div>
+    <img
+      src={tone === 'paga' ? pagaLogo.url : palmpayLogo.url}
+      alt={tone === 'paga' ? 'Paga' : 'PalmPay'}
+      className={`${className} rounded-full shrink-0 object-cover bg-card border border-border/60`}
+    />
   );
 }
 
@@ -216,7 +216,7 @@ function AccountTile({ acc, label, tone, onCopy }: { acc: VirtualAccount; label:
         <p className="text-xs font-bold text-foreground leading-tight">{label}</p>
         <p className="text-[9px] text-muted-foreground leading-tight">Wallet Account</p>
         <div className="flex items-center justify-between gap-1">
-          <p className="text-sm font-extrabold text-foreground tabular-nums tracking-tight">{acc.account_number}</p>
+          <p className="text-[11px] font-extrabold text-foreground tabular-nums tracking-tight truncate">{acc.account_number}</p>
           <Copy className="w-3 h-3 text-secondary shrink-0" />
         </div>
       </div>
