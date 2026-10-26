@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useVirtualAccounts, VirtualAccount } from '@/hooks/useVirtualAccounts';
 import { PalmPayNinDialog } from '@/components/dashboard/PalmPayNinDialog';
+import { BankLogo } from '@/components/dashboard/AccountCard';
 
 export default function AddMoney() {
   const navigate = useNavigate();
