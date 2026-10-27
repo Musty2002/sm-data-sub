@@ -533,9 +533,6 @@ export default function Data() {
                     </div>
                     <div className="pt-3 border-t border-border">
                       <p className="text-lg font-bold text-foreground">{selectedBundle.name}</p>
-                      <p className="text-xl font-bold text-primary mt-1">
-                        {formatPrice(parseFloat(selectedBundle.amount))}
-                      </p>
                     </div>
                   </div>
 
