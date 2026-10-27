@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 export default function PrivacyPolicy() {
   const navigate = useNavigate();
-  const lastUpdated = 'February 15, 2026';
+  const lastUpdated = 'October 27, 2026';
 
   return (
     <div className="min-h-screen bg-background">
@@ -102,6 +102,18 @@ export default function PrivacyPolicy() {
             <li><strong>Referral Code</strong> — a system-generated unique code for the referral program</li>
           </ul>
 
+          <h3 className="text-base font-semibold mb-2">2.9 National Identity Number (NIN)</h3>
+          <p className="mb-4 text-sm leading-relaxed">
+            To obtain a PalmPay virtual bank account number for wallet funding, you may be required to provide your 
+            11-digit National Identity Number (NIN). In line with Central Bank of Nigeria (CBN) and PalmPay compliance 
+            requirements, your NIN is collected solely for the purpose of identity verification and Know-Your-Customer 
+            (KYC) checks during virtual account creation. Your NIN is transmitted securely to our payment partner 
+            (PaymentPoint/PalmPay) for this verification and is stored with the same level of protection as your other 
+            personal data. <strong>We do not use your NIN for marketing purposes and we do not share it with any other 
+            third party</strong>. Providing your NIN is optional — you can continue using the App with your Paga (Aspfiy) 
+            virtual account without submitting a NIN.
+          </p>
+
           <h2 className="text-xl font-bold mb-3">3. How We Use Your Information</h2>
           <p className="mb-2 text-sm leading-relaxed">We use the collected information for the following purposes:</p>
           
@@ -154,7 +166,7 @@ export default function PrivacyPolicy() {
           <ul className="list-disc pl-5 mb-4 text-sm space-y-1">
             <li><strong>RGC Data API</strong> — our primary service provider for processing airtime, data, electricity, cable TV, and exam pin transactions. We share phone numbers, meter numbers, smart card numbers, and transaction amounts as necessary to fulfill your purchases.</li>
             <li><strong>PaymentPoint</strong> — our payment infrastructure provider for virtual account generation and deposit processing. We share your name, email, and phone number to create your virtual bank account.</li>
-            <li><strong>PalmPay</strong> — the banking partner through which virtual accounts are provisioned for wallet funding.</li>
+            <li><strong>PalmPay</strong> — the banking partner through which virtual accounts are provisioned for wallet funding. Where you choose to generate a PalmPay account number, we share your name, phone number, and National Identity Number (NIN) with PalmPay, as required by Central Bank of Nigeria (CBN) know-your-customer (KYC) regulations.</li>
             <li><strong>Firebase Cloud Messaging (Google)</strong> — used to deliver push notifications to your device. We share your FCM token with Google's servers for notification delivery.</li>
             <li><strong>Resend</strong> — our email service provider for sending password reset emails and PIN reset verification codes.</li>
             <li><strong>Supabase</strong> — our backend infrastructure provider that hosts our database, authentication system, and serverless functions. All data is stored on Supabase's secure cloud infrastructure.</li>
@@ -248,6 +260,7 @@ export default function PrivacyPolicy() {
             <li><strong>Company:</strong> Sir Smarewa Ltd (RC: 9198148)</li>
             <li><strong>App Name:</strong> SM Data Sub</li>
             <li><strong>Email:</strong> smdatasub.ng@gmail.com</li>
+            <li><strong>Phone:</strong> 09050799603 / 09078920178</li>
             <li><strong>Website:</strong> www.smdatasub.com.ng</li>
             <li><strong>WhatsApp:</strong> Available via the App's Support section</li>
           </ul>
