@@ -1,4 +1,4 @@
 # Tasks
 - [x] Hide the data price on the confirmation page; retain plan-list prices.
-- [ ] Check Bonanza support for Alpha and Smile and add supported services.
-- [ ] Verify the data selection flow.
+- [ ] Add Alpha and Smile purchases — blocked: Bonanza pricing lists both, but supplied and public documentation lacks their purchase/validation endpoints and request fields.
+- [x] Verify the signed-in data selection flow: plan list shows ₦500; confirmation shows plan and phone input without price.
