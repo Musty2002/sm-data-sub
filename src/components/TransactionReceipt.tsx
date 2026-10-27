@@ -157,7 +157,7 @@ ${transaction.type === 'data' && transaction.dataPlan ? `📦 Data Plan: ${trans
 
 ━━━━━━━━━━━━━━━━━━━━━━
 🌐 www.smdatasub.com.ng
-📞 Support: 09050799603
+📞 Support: 09050799603 / 09078920178
 ━━━━━━━━━━━━━━━━━━━━━━
         `.trim();
         
@@ -447,6 +447,10 @@ ${transaction.type === 'data' && transaction.dataPlan ? `📦 Data Plan: ${trans
                   <span className="text-xs font-bold">09050799603</span>
                 </div>
                 <div className="flex items-center gap-1.5 text-white">
+                  <Phone className="w-3 h-3" />
+                  <span className="text-xs font-bold">09078920178</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-white">
                   <Mail className="w-3 h-3" />
                   <span className="text-xs font-bold">Email Us</span>
                 </div>
@@ -530,7 +534,7 @@ function RichReceiptBody({ transaction, transactionId, networkKey }: { transacti
         </div>
       </div>
       <div className="bg-gradient-to-r from-red-600 to-red-500 py-3 px-4 text-center text-white text-xs font-bold">
-        Support: 09050799603 • www.smdatasub.com.ng
+        Support: 09050799603 / 09078920178 • www.smdatasub.com.ng
       </div>
     </div>
   );
