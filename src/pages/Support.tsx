@@ -54,6 +54,12 @@ const contactOptions = [
     action: () => window.open('tel:+2349050799603', '_blank'),
   },
   {
+    icon: Phone,
+    label: 'Customer Care',
+    description: '0907 892 0178',
+    action: () => window.open('tel:+2349078920178', '_blank'),
+  },
+  {
     icon: Mail,
     label: 'Email Support',
     description: 'smdatasub.ng@gmail.com',
